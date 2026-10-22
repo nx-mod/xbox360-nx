@@ -15,6 +15,12 @@
 #include <rex/rex_app.h>
 
 #include "halo3_gpu.h"
+
+#include <rex/cvar.h>
+
+#if HALO3_DEKO3D
+REXCVAR_DECLARE(bool, deko_compilar_solo_en_fondo);
+#endif
 #include <rex/filesystem/disc_image_extract.h>
 #include <rex/filesystem/first_launch.h>
 #include <rex/logging.h>
@@ -49,6 +55,11 @@ class Halo3App : public rex::ReXApp {
   // Left empty if none is found: the SDK then says what is missing. Runs before
   // the config file is read, as in nfsmw (see nfsmw_pal/src/nfsmw_app.h).
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    // No shader compiled on the spot (it held the ring thread for seconds): before the config file is read, so
+    // halo3.toml can still change it.
+#if HALO3_DEKO3D
+    REXCVAR_SET(deko_compilar_solo_en_fondo, true);
+#endif
     if (!paths.game_data_root.empty()) {
       return;
     }
