@@ -1,6 +1,8 @@
 #include "shader_recompiler.h"
 #include "shader_common.h"
 #include <stdexcept>
+#include <cstdio>
+#include <cstdlib>
 
 static constexpr char SWIZZLES[] = 
 { 
@@ -2130,6 +2132,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // shaders take the general form (switch on pc), which is right for any control flow.
     uint32_t pcPrimeraPasada = 0;
     bool hayBucle = false, haySalto = false;
+    // Forward jumps as (pc, target): conditional ones open an `if` that closes at the target; an unconditional one
+    // that is the last instruction before such a target is that if's `else`, which closes at its own target.
+    std::vector<std::pair<uint32_t, uint32_t>> saltosSi, saltosIncondicionales;
 #endif
 
     while (instrAddress < instrSize)
@@ -2164,10 +2169,22 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             case ControlFlowOpcode::CondJmp:
             {
+#ifdef HALO3_RECOMP
+                // An unconditional forward jump may be an if/else (decided after this pass, see saltosSi).
+                if (cfInstr.condJmp.isUnconditional && !cfInstr.condJmp.direction &&
+                    cfInstr.condJmp.address > pcPrimeraPasada)
+                    saltosIncondicionales.push_back({pcPrimeraPasada, uint32_t(cfInstr.condJmp.address)});
+                else
+#endif
                 if (cfInstr.condJmp.isUnconditional || cfInstr.condJmp.direction)
                     simpleControlFlow = false;
                 else
+                {
                     ++ifEndLabels[cfInstr.condJmp.address];
+#ifdef HALO3_RECOMP
+                    saltosSi.push_back({pcPrimeraPasada, uint32_t(cfInstr.condJmp.address)});
+#endif
+                }
 #ifdef HALO3_RECOMP
                 haySalto = true;
                 if (cfInstr.condJmp.address <= pcPrimeraPasada)
@@ -2195,7 +2212,60 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
 
 #ifdef HALO3_RECOMP
+    if (std::getenv("XENOS_MOTIVO_CF") && (!simpleControlFlow || (hayBucle && haySalto) || !saltosIncondicionales.empty()))
+        std::fprintf(stderr, "[cf] %s: simple antes=%d bucle=%d saltos_si=%zu incondicionales=%zu\n",
+                     isPixelShader ? "ps" : "vs", int(simpleControlFlow), int(hayBucle), saltosSi.size(),
+                     saltosIncondicionales.size());
     if (hayBucle && haySalto)
+        simpleControlFlow = false;
+    /*
+     * The if/else shape D3D compiles: `cond_jmp T1` (skip the then part), the then part, `jmp T2` as the last
+     * instruction before T1 (skip the else part), the else part, T2. Accepted only when T1 closes that one `if` and
+     * every region nests in every other (then [c, T1), else [T1, T2), and the other ifs): anything else keeps the
+     * general form, which is right for any control flow but which the GPU compilers handle badly (Halo 3's
+     * vertex shaders with it reached 155 registers).
+     */
+    if (simpleControlFlow && !saltosIncondicionales.empty())
+    {
+        std::vector<std::pair<uint32_t, uint32_t>> regiones = saltosSi;
+        std::vector<std::pair<uint32_t, uint32_t>> elses;
+        for (auto [u, t2] : saltosIncondicionales)
+        {
+            const uint32_t t1 = u + 1;
+            const auto si = std::find_if(saltosSi.begin(), saltosSi.end(), [&](auto j) { return j.second == t1 && j.first < u; });
+            const auto etiqueta = ifEndLabels.find(t1);
+            if (si == saltosSi.end() || etiqueta == ifEndLabels.end() || etiqueta->second != 1 || t2 <= t1 ||
+                elsesEn.count(t1))
+            {
+                simpleControlFlow = false;
+                break;
+            }
+            elses.push_back({t1, t2});
+            regiones.push_back({t1, t2});
+            regiones.push_back({si->first, t2});
+        }
+        // Two regions [a0, a1) and [b0, b1) cross when a0 < b0 < a1 < b1.
+        for (size_t i = 0; simpleControlFlow && i < regiones.size(); i++)
+            for (size_t j = 0; j < regiones.size(); j++)
+            {
+                const auto [a0, a1] = regiones[i];
+                const auto [b0, b1] = regiones[j];
+                if (a0 < b0 && b0 < a1 && a1 < b1)
+                {
+                    simpleControlFlow = false;
+                    break;
+                }
+            }
+        if (simpleControlFlow)
+            for (auto [t1, t2] : elses)
+            {
+                elsesEn.insert(t1);
+                ++ifEndLabels[t2];
+            }
+        else
+            elsesEn.clear();
+    }
+    else if (!saltosIncondicionales.empty())
         simpleControlFlow = false;
 #endif
     if (simpleControlFlow)
@@ -2239,6 +2309,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 auto findResult = ifEndLabels.find(pc);
                 if (findResult != ifEndLabels.end())
                 {
+#ifdef HALO3_RECOMP
+                    // At an if/else's T1 the outermost block closing here is that if: it becomes `} else {`.
+                    const bool conElse = elsesEn.count(pc) != 0;
+                    if (conElse)
+                        cerrarPredicado();
+#endif
                     for (uint32_t i = 0; i < findResult->second; i++)
                     {
 #ifdef HALO3_RECOMP
@@ -2249,6 +2325,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         --indentation;
                         indent();
                         out += "}\n";
+#ifdef HALO3_RECOMP
+                        if (conElse && i + 1 == findResult->second)
+                        {
+                            indent();
+                            out += "else\n";
+                            indent();
+                            out += "{\n";
+                            ++indentation;
+                            marcaCierre_ = finCierre_ = std::string::npos;  // that `}` is not reopened
+                            predGarantizado_ = -1;
+                        }
+#endif
                     }
                 }
             }
@@ -2386,6 +2474,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
                 if (cfInstr.condJmp.isUnconditional)
                 {
+#ifdef HALO3_RECOMP
+                    if (simpleControlFlow)
+                        break;  // an if/else's jump over the else part: the braces already do it
+#endif
                     assert(!simpleControlFlow);
                     println("\t\t\tpc = {};", uint32_t(cfInstr.condJmp.address));
                     out += "\t\t\tcontinue;\n";
@@ -2559,6 +2651,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         // To host clip space (ndc_scale/ndc_offset from
                         // draw.cpp): draws in pixels with clipping disabled.
                         out += "\toPos.xy = oPos.xy * g_NdcScale + g_NdcOffset * oPos.w;\n";
+                    #endif
+                    #ifdef HALO3_RECOMP
+                        // OpenGL clip space (PA_CL_CLIP_CNTL dx_clip_space_def = 0, which Halo 3 sets): z runs from
+                        // -w to w, the host clips at 0..w. The renderer puts 1.0 at shared byte 492 for those
+                        // draws, and z becomes (z + w) / 2, as Xenia remaps it; 0.0 leaves D3D draws alone.
+                        out += "\toPos.z = lerp(oPos.z, (oPos.z + oPos.w) * 0.5, NFSMW_COMPARTIDA_FLOAT(492));\n";
                     #endif
                         out += "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
                     }

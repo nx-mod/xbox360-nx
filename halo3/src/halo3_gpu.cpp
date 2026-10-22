@@ -131,6 +131,12 @@ uint32_t ConstantBase(uint32_t type_index) {
 
 // Geometry draws to the deko3d renderer. Off until they make a picture: on, the shader translation and compiles
 // starved the game (0 fps, audio static once the menu loaded), and the screen stayed black anyway.
+// The offline shader library (halo3/tools). Off: it predates the translator's vertex fixes (the vertex index in r0.x,
+// mini fetch strides), its vertex shaders match the game's only approximately, and the run-time translator now
+// covers every shader; the DKSH cache keeps the translated ones from recompiling.
+REXCVAR_DEFINE_BOOL(halo3_usar_biblioteca_shaders, false, "Halo3",
+                    "Use halo3_shaders_dk.nfsp beside the NRO for the shaders it has (off = translate every shader)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(halo3_dibujar_geometria, false, "Halo3",
                     "Send geometry draws to the deko3d renderer (testing; off = the menu runs as before drawing)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -394,7 +400,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       REXLOG_INFO("[gpu] deko3d renderer backend up");
       // The translated shaders (halo3/tools, built from the maps; not shipped) next to the NRO.
       const auto biblioteca = rex::filesystem::GetExecutableFolder() / "halo3_shaders_dk.nfsp";
-      if (shaders_.Cargar(biblioteca)) {
+      static const bool con_biblioteca = REXCVAR_GET(halo3_usar_biblioteca_shaders);
+      if (con_biblioteca && shaders_.Cargar(biblioteca)) {
         std::fprintf(stderr, "[gpu] shader library: %zu shaders\n", shaders_.Cantidad());
       } else {
         std::fprintf(stderr, "[gpu] no shader library at %s: every shader is translated here\n",

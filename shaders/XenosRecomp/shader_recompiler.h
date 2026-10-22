@@ -55,6 +55,7 @@ struct ShaderRecompiler : StringBuffer
     std::unordered_map<uint32_t, const char*> boolConstants;
     std::unordered_map<uint32_t, const char*> samplers;
     std::unordered_map<uint32_t, uint32_t> ifEndLabels;
+    std::set<uint32_t> elsesEn;  // HALO3_RECOMP: labels where an if becomes `} else {`
     uint32_t specConstantsMask = 0;
 
 #ifdef UNLEASHED_RECOMP
