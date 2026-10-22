@@ -76,6 +76,25 @@ covers everything above at once, and it is the on-console shader generation the 
 (cached by microcode hash): microcode → GLSL → uam → DKSH, with the existing DKSH cache. The offline library work
 stays useful as the test corpus: every container is checked with the host `uam` (devkitPro) before the console.
 
+## Run-time translation (2026-10-22)
+
+Both routes, as decided: the library is the fast path, the translator covers the rest (and everything when there is
+no library, so a player needs no PC step).
+
+- `XENOS_GLSL` in `shaders/XenosRecomp`: same translator, GLSL out. Prelude `shaders/XenosRecomp/shader_common.glsl`
+  (HLSL names given GLSL meaning; UBOs 0-3, `g_vf<slot>` storage buffers, combined samplers at binding = slot).
+  Host check: 1,130 of the 1,141 map containers compile with `uam`; the other 11 are scan junk (8 all-zero vertex
+  shaders, 3 whose "microcode" is a debug-symbol path).
+- Raw microcode is wrapped like Xenia reads it (`halo3/src/halo3_contenedor.h`): no vertex elements, so every
+  vertex fetch is a buffer load by `r0.x`; 16 interpolators by index (VS export k = TEXCOORDk = PS register k).
+- `r0.x` of a vertex shader is the guest vertex index: `gl_VertexID` (SV_VertexID in the HLSL library) plus the
+  draw's first vertex, which the renderer writes at shared-constant byte 488 (the draw rebases indices by -vmin).
+- Pixel shaders are translated twice: the second pass declares only the outputs the first one wrote.
+- A pair with one library shader and one translated would read interpolators differently (by usage vs by index):
+  `halo3_gpu.cpp` then translates both.
+- Renderer: `EntradaShader::glsl`; `ShaderDe`/`InfoDe` take `rex::deko3d::GlslDeTraductor` instead of SPIR-V,
+  DKSH cache keyed by the text's hash. PC test of the console path: `halo3/tools/halo3_glsl_crudo.cpp`.
+
 ## Steps
 
 1. **Halo shader library.** Scan the maps for `10 2A 11` containers (the scanner, `shaders/nfsmw_buscar_contenedores.cpp`

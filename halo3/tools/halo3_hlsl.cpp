@@ -3,22 +3,14 @@
  * @brief   Halo 3's shader containers to HLSL with XenosRecomp (shaders/XenosRecomp, NFS's version).
  *
  * The same driver as shaders/nfsmw_hlsl.cpp, for the containers halo3_shader_containers.py finds in the maps.
- * Those are in the 2008 format XenosRecomp reads, with one difference: Halo 3 ships them without a constant table
- * (its offset is 0; Bungie keeps the names in its own tags). XenosRecomp needs the table to name the constants, the
- * booleans and the samplers, so this gives each container a synthetic one, appended after it:
- *
- *  - g_c: every float register (256 for vertex shaders, 224 for pixel shaders, XenosRecomp's limits), so each
- *    constant is read by register number, relative addressing included;
- *  - g_b0..g_b15: the boolean registers of the shader's stage;
- *  - no samplers: XenosRecomp (HALO3_RECOMP) declares the slots the texture fetches use, with each fetch's own
- *    dimension, at binding = slot.
- *
- * The renderer fills the constants by register, as the Xbox 360 GPU sees them, so no names are needed at run time.
+ * Those are in the 2008 format XenosRecomp reads, without a constant table: each gets the synthetic one of
+ * halo3/src/halo3_contenedor.h.
  *
  * Usage
  *   halo3_hlsl <input folder> <output folder> <shader_common.h>
  */
 #include "XenosRecomp/shader_recompiler.h"
+#include "../src/halo3_contenedor.h"  // the synthetic constant table, shared with the run-time translator
 
 #include <algorithm>
 #include <cstdio>
@@ -47,84 +39,7 @@ std::vector<uint8_t> ReadAll(const std::filesystem::path& path) {
   return data;
 }
 
-void PutBE32(std::vector<uint8_t>& v, size_t o, uint32_t x) {
-  v[o] = uint8_t(x >> 24);
-  v[o + 1] = uint8_t(x >> 16);
-  v[o + 2] = uint8_t(x >> 8);
-  v[o + 3] = uint8_t(x);
-}
-
-void PutBE16(std::vector<uint8_t>& v, size_t o, uint16_t x) {
-  v[o] = uint8_t(x >> 8);
-  v[o + 1] = uint8_t(x);
-}
-
-uint32_t GetBE32(const std::vector<uint8_t>& v, size_t o) {
-  return uint32_t(v[o]) << 24 | uint32_t(v[o + 1]) << 16 | uint32_t(v[o + 2]) << 8 | v[o + 3];
-}
-
-// Appends a D3DXSHADER_CONSTANTTABLE (inside XenosRecomp's ConstantTableContainer) and points the header at it.
-std::vector<uint8_t> WithSyntheticConstantTable(const std::vector<uint8_t>& in) {
-  std::vector<uint8_t> out = in;
-  out.resize((out.size() + 15) & ~size_t(15), 0);
-  const bool pixel = (GetBE32(in, 0) & 1) == 0;
-
-  struct Entry {
-    std::string name;
-    uint16_t set;  // RegisterSet: 0 bool, 1 int4, 2 float4, 3 sampler
-    uint16_t index;
-    uint16_t count;
-    uint16_t cls;   // ParameterClass
-    uint16_t type;  // ParameterType
-    uint16_t rows, columns, elements;
-  };
-  std::vector<Entry> entries;
-  entries.push_back({"g_c", 2, 0, 256, 1, 3, 1, 4, 256});  // Halo 3's pixel shaders read up to c255 too
-  for (uint16_t i = 0; i < 16; ++i) {
-    entries.push_back({"g_b" + std::to_string(i), 0, i, 1, 0, 1, 1, 1, 1});
-  }
-  // No samplers: XenosRecomp (HALO3_RECOMP) declares the ones the fetches use, with their real dimension.
-
-  // Layout, relative to the ConstantTable (constantTableData): the table (28 bytes), the ConstantInfo array
-  // (20 bytes each), the TypeInfo array (16 bytes each), then the names.
-  const size_t container = out.size();  // ConstantTableContainer: size, then the ConstantTable
-  const size_t table = container + 4;
-  const size_t infos = 28;
-  const size_t types = infos + entries.size() * 20;
-  size_t names = types + entries.size() * 16;
-  size_t end = names;
-  for (const Entry& e : entries) {
-    end += e.name.size() + 1;
-  }
-  end = (end + 3) & ~size_t(3);
-  out.resize(table + end, 0);
-
-  PutBE32(out, container, uint32_t(end));
-  PutBE32(out, table + 0, 28);                  // size
-  PutBE32(out, table + 8, pixel ? 0xFFFF0300u : 0xFFFE0300u);  // version (ps_3_0 / vs_3_0)
-  PutBE32(out, table + 12, uint32_t(entries.size()));
-  PutBE32(out, table + 16, uint32_t(infos));
-  PutBE32(out, table + 24, 0);                  // target
-  for (size_t i = 0; i < entries.size(); ++i) {
-    const Entry& e = entries[i];
-    const size_t info = table + infos + i * 20;
-    const size_t type = table + types + i * 16;
-    PutBE32(out, info + 0, uint32_t(names));
-    PutBE16(out, info + 4, e.set);
-    PutBE16(out, info + 6, e.index);
-    PutBE16(out, info + 8, e.count);
-    PutBE32(out, info + 12, uint32_t(types + i * 16));
-    PutBE16(out, type + 0, e.cls);
-    PutBE16(out, type + 2, e.type);
-    PutBE16(out, type + 4, e.rows);
-    PutBE16(out, type + 6, e.columns);
-    PutBE16(out, type + 8, e.elements);
-    std::memcpy(out.data() + table + names, e.name.c_str(), e.name.size() + 1);
-    names += e.name.size() + 1;
-  }
-  PutBE32(out, 16, uint32_t(container));  // ShaderContainer::constantTableOffset
-  return out;
-}
+uint32_t GetBE32(const std::vector<uint8_t>& v, size_t o) { return halo3::contenedor::LeerBE32(v, o); }
 
 }  // namespace
 
@@ -164,7 +79,7 @@ int main(int argc, char** argv) try {
       ++skipped;
       continue;
     }
-    const std::vector<uint8_t> container = GetBE32(data, 16) ? data : WithSyntheticConstantTable(data);
+    const std::vector<uint8_t> container = GetBE32(data, 16) ? data : halo3::contenedor::ConTablaSintetica(data);
     ShaderRecompiler recompiler;
     try {
       recompiler.recompile(container.data(), include);

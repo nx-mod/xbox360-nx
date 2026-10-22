@@ -5,11 +5,15 @@
 #include <rex/logging.h>
 
 #include "../../nfsmw_pal/src/nfsmw_shader_library.h"  // the library file format (NFS's; to move into the SDK)
+#if HALO3_DEKO3D
+#include "halo3_traductor.h"
+#endif
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -124,22 +128,35 @@ const char* Leer(const nfsmw::native::Shader& s, EntradaShader& e) {
   return nullptr;
 }
 
+uint64_t Clave(bool vertices, std::span<const uint32_t> microcodigo) {
+  return XXH3_64bits(microcodigo.data(), microcodigo.size_bytes()) ^ (uint64_t(vertices) << 63) ^ microcodigo.size();
+}
+
 }  // namespace
 
 struct ShadersHalo::Datos {
   nfsmw::native::BibliotecaShaders biblioteca;
   std::vector<EntradaShader> entradas;
+  std::deque<EntradaShader> traducidas;  // translated on the console (a deque: the renderer keeps the pointers)
   std::map<std::pair<bool, uint32_t>, std::vector<uint32_t>> candidatos;  // (vertex, words) -> entries
   std::unordered_map<uint64_t, const EntradaShader*> cache;              // raw microcode -> answer
+  std::unordered_map<uint64_t, const EntradaShader*> cache_traducidas;   // raw microcode -> translation (or nullptr)
   std::vector<uint32_t> temporal;
   EstadisticasShaders estadisticas;
   uint32_t avisos = 0;
   bool cargada = false;
+  bool traductor = false;
 };
 
 ShadersHalo::ShadersHalo() : datos_(std::make_unique<Datos>()) {}
 ShadersHalo::~ShadersHalo() = default;
 bool ShadersHalo::cargada() const { return datos_->cargada; }
+bool ShadersHalo::activo() const { return datos_->cargada || datos_->traductor; }
+void ShadersHalo::HabilitarTraductor() {
+#if HALO3_DEKO3D
+  datos_->traductor = true;
+#endif
+}
 size_t ShadersHalo::Cantidad() const { return datos_->entradas.size(); }
 EstadisticasShaders ShadersHalo::Estadisticas() const { return datos_->estadisticas; }
 
@@ -173,8 +190,7 @@ bool ShadersHalo::Cargar(const std::filesystem::path& archivo) {
 const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uint32_t> microcodigo) {
   Datos& d = *datos_;
   ++d.estadisticas.cargas;
-  const uint64_t clave =
-      XXH3_64bits(microcodigo.data(), microcodigo.size_bytes()) ^ (uint64_t(vertices) << 63) ^ microcodigo.size();
+  const uint64_t clave = Clave(vertices, microcodigo);
   if (const auto it = d.cache.find(clave); it != d.cache.end()) return it->second;
   ++d.estadisticas.distintos;
 
@@ -214,6 +230,12 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
     if (!exacto) ++d.estadisticas.aproximados;
   } else {
     ++d.estadisticas.sin_identificar;
+    if (d.traductor) {
+      if (const EntradaShader* t = Traducida(vertices, microcodigo)) {
+        d.cache.emplace(clave, t);
+        return t;
+      }
+    }
     if (d.avisos++ < kMaxAvisos) {
       // To stderr (it survives closing the game) and the microcode to logs/rex/, to compare with the library.
       std::fprintf(stderr, "[halo3] %s shader sin identificar: %zu palabras, huella %016llX, mejor parecido %zu y segundo %zu\n",
@@ -232,6 +254,30 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
   }
   d.cache.emplace(clave, elegido);
   return elegido;
+}
+
+const EntradaShader* ShadersHalo::Traducida(bool vertices, std::span<const uint32_t> microcodigo) {
+  Datos& d = *datos_;
+  if (!d.traductor) return nullptr;
+  const uint64_t clave = Clave(vertices, microcodigo);
+  if (const auto it = d.cache_traducidas.find(clave); it != d.cache_traducidas.end()) return it->second;
+  const EntradaShader* r = nullptr;
+#if HALO3_DEKO3D
+  EntradaShader& e = d.traducidas.emplace_back();
+  std::string error;
+  if (TraducirMicrocodigo(vertices, microcodigo, e, error)) {
+    e.numero = uint32_t(0x80000000u | (d.traducidas.size() - 1));  // reports: translated, not in the library
+    ++d.estadisticas.traducidos;
+    r = &e;
+  } else {
+    d.traducidas.pop_back();
+    ++d.estadisticas.fallidos;
+    std::fprintf(stderr, "[halo3] %s shader %016llX: el traductor no puede: %s\n", vertices ? "vertex" : "pixel",
+                 static_cast<unsigned long long>(clave), error.c_str());
+  }
+#endif
+  d.cache_traducidas.emplace(clave, r);
+  return r;
 }
 
 }  // namespace halo3

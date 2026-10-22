@@ -14,6 +14,8 @@
 struct Halo3BooleanBlock { uint4 b[2]; uint4 bucles[8]; };
 [[vk::binding(3, 4)]] ConstantBuffer<Halo3BooleanBlock> g_Halo3Booleans;
 #define halo_bool(A) ((g_Halo3Booleans.b[((A) >> 7) & 1][((A) >> 5) & 3] >> ((A) & 31)) & 1u)
+// The guest vertex index (r0.x): the draw rebases its indices by the first vertex, which the renderer puts at 488.
+#define XENO_INDICE_VERTICE (int(iVertexId) + int(NFSMW_COMPARTIDA_UINT(488)))
 int4 halo_loop(uint n) {
   uint v = g_Halo3Booleans.bucles[n >> 2][n & 3];
   return int4(int(v & 0xFFu), int((v >> 8) & 0xFFu), int(v << 8) >> 24, 0);
@@ -35,6 +37,7 @@ float4 getWeights1D(Texture2D<float4> texture, SamplerState samplerState, float 
 // Non-deko (PC/DXC reference) path: the booleans come from the shared push-constant buffer at byte 512.
 #define halo_bool(A) ((vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 512 + (((A) >> 5) & 7) * 4) >> ((A) & 31)) & 1u)
 #define halo_loop(N) int4(0, 0, 0, 0)
+#define XENO_INDICE_VERTICE int(iVertexId)
 #endif
 
 // Vertex fetches that no vertex element declares (pixel shaders, extra streams): a load from the fetch constant's

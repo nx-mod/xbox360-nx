@@ -149,6 +149,21 @@ static constexpr std::string_view TEXTURE_DIMENSIONS[] =
     "Cube" 
 };
 
+#ifdef XENOS_GLSL
+// GLSL has no implicit broadcast or truncation: a value written to N components goes through the constructor of
+// that size (float4 and the rest are the prelude's names for vec4...).
+static const char* tipoDeComponentes(uint32_t mascara)
+{
+    switch (std::popcount(mascara & 0xF))
+    {
+    case 1: return "float";
+    case 2: return "float2";
+    case 3: return "float3";
+    default: return "float4";
+    }
+}
+#endif
+
 static FetchDestinationSwizzle getDestSwizzle(uint32_t dstSwizzle, uint32_t index)
 {
     return FetchDestinationSwizzle((dstSwizzle >> (index * 3)) & 0x7);
@@ -230,7 +245,11 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         indent();
         print("r{}.", uint32_t(instr.dstRegister));
         printDstSwizzle(instr.dstSwizzle, false);
+#ifdef XENOS_GLSL
+        print(" = halo_vfetch_{}(vfIndice * {} + ({}), {}u, {}u, {}u, {}).", slot, uint32_t(instr.stride),
+#else
         print(" = halo_vfetch(g_vf{}, vfIndice * {} + ({}), {}, {}, {}, {}).", slot, uint32_t(instr.stride),
+#endif
             int32_t(instr.offset), uint32_t(instr.format), uint32_t(instr.signedRfModeAll), uint32_t(instr.numFormatAll),
             int32_t(instr.expAdjust));
         printDstSwizzle(instr.dstSwizzle, true);
@@ -691,22 +710,38 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     {
     case AluVectorOpcode::KillEq:
         indent();
+#ifdef XENOS_GLSL
+        println("clip(xeno_any_eq({}, {}) ? -1.0 : 1.0);", op(VECTOR_0), op(VECTOR_1));
+#else
         println("clip(any({} == {}) ? -1 : 1);", op(VECTOR_0), op(VECTOR_1));
+#endif
         break;
     
     case AluVectorOpcode::KillGt:
         indent();
+#ifdef XENOS_GLSL
+        println("clip(xeno_any_gt({}, {}) ? -1.0 : 1.0);", op(VECTOR_0), op(VECTOR_1));
+#else
         println("clip(any({} > {}) ? -1 : 1);", op(VECTOR_0), op(VECTOR_1));
+#endif
         break;
     
     case AluVectorOpcode::KillGe:
         indent();
+#ifdef XENOS_GLSL
+        println("clip(xeno_any_ge({}, {}) ? -1.0 : 1.0);", op(VECTOR_0), op(VECTOR_1));
+#else
         println("clip(any({} >= {}) ? -1 : 1);", op(VECTOR_0), op(VECTOR_1));
+#endif
         break;
     
     case AluVectorOpcode::KillNe:
         indent();
+#ifdef XENOS_GLSL
+        println("clip(xeno_any_ne({}, {}) ? -1.0 : 1.0);", op(VECTOR_0), op(VECTOR_1));
+#else
         println("clip(any({} != {}) ? -1 : 1);", op(VECTOR_0), op(VECTOR_1));
+#endif
         break;
     }
 
@@ -809,7 +844,7 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         soloW = true;  // the w of src0 by itself: the masked swizzle may not reach w
         const std::string w = op(VECTOR_0);
         soloW = false;
-        println("a0 = (int)clamp(floor({} + 0.5), -256.0, 255.0);", w);
+        println("a0 = int(clamp(floor({} + 0.5), -256.0, 255.0));", w);
 #else
         println("a0 = (int)clamp(floor(({}).w + 0.5), -256.0, 255.0);", op(VECTOR_0));
 #endif
@@ -848,6 +883,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         }
 
         out += " = ";
+#ifdef XENOS_GLSL
+        print("{}(", tipoDeComponentes(vectorWriteMask));
+#endif
 
         if (instr.vectorSaturate)
             out += "saturate(";
@@ -889,19 +927,35 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         }
 
         case AluVectorOpcode::Seq:
+#ifdef XENOS_GLSL
+            print("xeno_eq({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("{} == {}", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::Sgt:
+#ifdef XENOS_GLSL
+            print("xeno_gt({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("{} > {}", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::Sge:
+#ifdef XENOS_GLSL
+            print("xeno_ge({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("{} >= {}", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::Sne:
+#ifdef XENOS_GLSL
+            print("xeno_ne({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("{} != {}", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::Frc:
@@ -921,15 +975,27 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluVectorOpcode::CndEq:
+#ifdef XENOS_GLSL
+            print("xeno_cnd_eq({}, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#else
             print("select({} == 0.0, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#endif
             break;
 
         case AluVectorOpcode::CndGe:
+#ifdef XENOS_GLSL
+            print("xeno_cnd_ge({}, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#else
             print("select({} >= 0.0, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#endif
             break;
 
         case AluVectorOpcode::CndGt:
+#ifdef XENOS_GLSL
+            print("xeno_cnd_gt({}, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#else
             print("select({} > 0.0, {}, {})", op(VECTOR_0), op(VECTOR_1), op(VECTOR_2));
+#endif
             break;
 
         case AluVectorOpcode::Dp4:
@@ -957,19 +1023,35 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluVectorOpcode::KillEq:
+#ifdef XENOS_GLSL
+            print("xeno_any_eq({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("any({} == {})", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::KillGt:
+#ifdef XENOS_GLSL
+            print("xeno_any_gt({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("any({} > {})", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::KillGe:
+#ifdef XENOS_GLSL
+            print("xeno_any_ge({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("any({} >= {})", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::KillNe:
+#ifdef XENOS_GLSL
+            print("xeno_any_ne({}, {})", op(VECTOR_0), op(VECTOR_1));
+#else
             print("any({} != {})", op(VECTOR_0), op(VECTOR_1));
+#endif
             break;
 
         case AluVectorOpcode::Dst:
@@ -994,6 +1076,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
         if (instr.vectorSaturate)
             out += ')';
+#ifdef XENOS_GLSL
+        out += ')';
+#endif
 
         out += ";\n";
     }
@@ -1051,7 +1136,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         }
 
         indent();
+#ifdef XENOS_GLSL
+        out += "ps = float(";  // comparisons give bool
+#else
         out += "ps = ";
+#endif
         if (instr.scalarSaturate)
             out += "saturate(";
 
@@ -1233,6 +1322,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
         if (instr.scalarSaturate)
             out += ')';
+#ifdef XENOS_GLSL
+        out += ')';
+#endif
 
         out += ";\n";
 
@@ -1240,11 +1332,19 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         {
         case AluScalarOpcode::MaxAs:
             indent();
+            #ifdef XENOS_GLSL
+            println("a0 = int(clamp(floor({} + 0.5), -256.0, 255.0));", op(SCALAR_0));
+#else
             println("a0 = (int)clamp(floor({} + 0.5), -256.0, 255.0);", op(SCALAR_0));
+#endif
             break;     
         case AluScalarOpcode::MaxAsf:
             indent();
+            #ifdef XENOS_GLSL
+            println("a0 = int(clamp(floor({}), -256.0, 255.0));", op(SCALAR_0));
+#else
             println("a0 = (int)clamp(floor({}), -256.0, 255.0);", op(SCALAR_0));
+#endif
             break;
         }
     }
@@ -1272,7 +1372,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
                 out += SWIZZLES[i];
         }
 
+#ifdef XENOS_GLSL
+        print(" = {}(ps);\n", tipoDeComponentes(scalarWriteMask));
+#else
         out += " = ps;\n";
+#endif
     }
 
 #ifdef HALO3_RECOMP
@@ -1621,6 +1725,49 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += "#endif\n";
 
+#ifdef XENOS_GLSL
+    // GLSL: inputs and outputs are globals at explicit locations and main takes nothing. Interpolators sit at their
+    // index in INTERPOLATORS (TEXCOORDn = n, COLORn = 16 + n, as the renderer counts them); vertex inputs in
+    // element order, as for HLSL (HALO3_RECOMP).
+    if (isPixelShader)
+    {
+        out += "#define iPos gl_FragCoord\n#define iFace gl_FrontFacing\n";
+        for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
+            println("layout(location = {}) in float4 i{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
+                INTERPOLATORS[k].second);
+        auto pixelShader = reinterpret_cast<const PixelShader*>(shader);
+        for (uint32_t c = 0; c < 4; c++)
+            if (pixelShader->outputs & (PIXEL_SHADER_OUTPUT_COLOR0 << c))
+                println("layout(location = {0}) out float4 oC{0};", c);
+        if (pixelShader->outputs & PIXEL_SHADER_OUTPUT_DEPTH)
+            out += "#define oDepth gl_FragDepth\n";
+    }
+    else
+    {
+        auto vertexShader = reinterpret_cast<const VertexShader*>(shader);
+        for (uint32_t i = 0; i < vertexShader->vertexElementCount; i++)
+        {
+            union
+            {
+                VertexElement vertexElement;
+                uint32_t value;
+            };
+            value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + i];
+            vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+            const uint32_t clave = (uint32_t(vertexElement.usage) << 4) | uint32_t(vertexElement.usageIndex);
+            if (std::find(ordenEntradas.begin(), ordenEntradas.end(), clave) != ordenEntradas.end())
+                continue;
+            println("layout(location = {}) in {} i{}{};", ordenEntradas.size(), USAGE_TYPES[uint32_t(vertexElement.usage)],
+                USAGE_VARIABLES[uint32_t(vertexElement.usage)], uint32_t(vertexElement.usageIndex));
+            ordenEntradas.push_back(clave);
+        }
+        out += "#define oPos gl_Position\n";
+        for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
+            println("layout(location = {}) out float4 o{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
+                INTERPOLATORS[k].second);
+    }
+    out += "void main()\n";
+#else
     out += "void main(\n";
 
     if (isPixelShader)
@@ -1712,6 +1859,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         }
     #endif
 
+    #ifdef HALO3_RECOMP
+        out += "\tin uint iVertexId : SV_VertexID,\n";  // r0.x (XENO_INDICE_VERTICE)
+    #endif
         out += "\tout float4 oPos : SV_Position";
 
         for (auto& [usage, usageIndex] : INTERPOLATORS)
@@ -1719,6 +1869,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
 
     out += ")\n";
+#endif
     out += "{\n";
 
 #ifdef UNLEASHED_RECOMP
@@ -1824,7 +1975,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     #endif
 
         for (auto& [usage, usageIndex] : INTERPOLATORS)
+#ifdef XENOS_GLSL
+            println("\to{}{} = float4(0.0);", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+#else
             println("\to{}{} = 0.0;", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+#endif
 
         out += "\n";
     }
@@ -1838,6 +1993,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
                 out += "float4((iPos.xy - 0.5) * float2(iFace ? 1.0 : -1.0, 1.0), 0.0, 0.0);\n";
             }
+        #ifdef HALO3_RECOMP
+            // The vertex index, which the hardware loads into r0.x: the element-less fetches read their buffers by it.
+            else if (!isPixelShader && i == 0)
+            {
+                out += "float4(float(XENO_INDICE_VERTICE), 0.0, 0.0, 0.0);\n";
+            }
+        #endif
         #ifdef UNLEASHED_RECOMP
             else if (!isPixelShader && hasIndexCount && i == 0)
             {
@@ -1846,7 +2008,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         #endif
             else
             {
+#ifdef XENOS_GLSL
+                out += "float4(0.0);\n";
+#else
                 out += "0.0;\n";
+#endif
             }
         }
     }
@@ -1854,7 +2020,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\tint a0 = 0;\n";
 #ifdef HALO3_RECOMP
     out += "\tint vfIndice = 0;\n";
+#ifdef XENOS_GLSL
+    out += "\tfloat4 oDescartado = float4(0.0);\n";
+#else
     out += "\tfloat4 oDescartado = 0.0;\n";
+#endif
     // Loop counters the definition table does not give come from the GPU's loop constants (halo_loop).
     for (uint32_t i = 0; i < 32; i++)
         if (!enterosDefinidos.count(i))
@@ -1868,11 +2038,19 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 #ifdef UNLEASHED_RECOMP
         out += "\tfloat2 pixelCoord = 0.0;\n";
 #endif
+#ifdef XENOS_GLSL
+        out += "\tCubeMapData cubeMapData = xeno_cubo_vacio();\n";
+#else
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";
+#endif
     }
 #ifdef HALO3_RECOMP
     else
+#ifdef XENOS_GLSL
+        out += "\tCubeMapData cubeMapData = xeno_cubo_vacio();\n";  // Halo's vertex shaders fetch cubemaps too
+#else
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";  // Halo's vertex shaders fetch cubemaps too
+#endif
 #endif
 
     const be<uint32_t>* code = reinterpret_cast<const be<uint32_t>*>(shaderData + shaderContainer->virtualSize + shader->physicalOffset);
@@ -1977,7 +2155,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
     else
     {
+#ifdef XENOS_GLSL
+        out += "\n\tint pc = 0;\n";  // GLSL: the case labels are int
+#else
         out += "\n\tuint pc = 0;\n";
+#endif
         out += "\twhile (true)\n";
         out += "\t{\n";
         out += "\t\tswitch (pc)\n";
@@ -2130,9 +2312,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             case ControlFlowOpcode::LoopEnd:
                 if (simpleControlFlow)
                 {
-                    --indentation;
-                    indent();
-                    out += "}\n";
+#ifdef HALO3_RECOMP
+                    if (indentation > 1)  // never main's own brace
+#endif
+                    {
+                        --indentation;
+                        indent();
+                        out += "}\n";
+                    }
                 }
                 else
                 {
@@ -2276,7 +2463,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     specConstantsMask |= SPEC_CONSTANT_ALPHA_TEST;
 
                     indent();
+#ifdef XENOS_GLSL
+                    out += "if ((g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST) != 0u)";  // no attributes, a bool
+#else
                     out += "[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)";
+#endif
                     indent();
                     out += '{';
 
@@ -2343,7 +2534,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 }
             }
 
+#ifdef HALO3_RECOMP
+            // Never main's own brace (an all-zero program reaches here with no block open).
+            if (shouldCloseCurlyBracket && indentation > 1)
+#else
             if (shouldCloseCurlyBracket)
+#endif
             {
                 --indentation;
                 const size_t marcaLlaveCf = out.size();
@@ -2407,7 +2603,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         {
             if (enlace == 16)
                 declaraciones += "#error \"more than 16 vertex fetch buffers\"\n";
+#ifdef XENOS_GLSL
+            // GLSL cannot pass a buffer block to a function: one accessor per slot, then the shared decoder.
+            declaraciones += fmt::format("layout(std430, binding = {0}) readonly buffer XenoVf{1} {{ uint d[]; }} g_vf{1};\n"
+                "float4 halo_vfetch_{1}(int dword, uint f, uint sg, uint en, int ex) {{ uint a = uint(max(dword, 0)); "
+                "return halo_vf_decodificar(g_vf{1}.d[a], g_vf{1}.d[a + 1u], g_vf{1}.d[a + 2u], g_vf{1}.d[a + 3u], f, sg, en, "
+                "ex); }}\n", enlace++, slot);
+#else
             declaraciones += fmt::format("[[vk::binding({}, 5)]] ByteAddressBuffer g_vf{};\n", enlace++, slot);
+#endif
         }
         out.insert(marcaBuffersVf, declaraciones + "\n");
     }
@@ -2421,8 +2625,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             // A 1D fetch reads a 2D texture of height 1 (tfetch1D, halo3_shader_common.h).
             const char* nombre = dimension == uint32_t(TextureDimension::Texture3D) ? "3D"
                 : dimension == uint32_t(TextureDimension::TextureCube) ? "Cube" : "2D";
+#ifdef XENOS_GLSL
+            // A combined sampler at binding = slot; the "sampler" argument of the helpers is a dummy 0.
+            declaraciones += fmt::format("layout(binding = {0}) uniform sampler{1} s{0}_Textura;\n", slot, nombre);
+            declaraciones += fmt::format("#define s{0}_Muestreo 0\n", slot);
+#else
             declaraciones += fmt::format("[[vk::binding({0}, 0)]] Texture{1}<float4> s{0}_Textura;\n", slot, nombre);
             declaraciones += fmt::format("[[vk::binding({0}, 1)]] SamplerState s{0}_Muestreo;\n", slot);
+#endif
             declaraciones += fmt::format("#define s{0}_Texture{1}DescriptorIndex s{0}_Textura\n", slot, nombre);
             if (strcmp(nombre, "2D") == 0)  // the same slot may also be fetched as 1D (a 2D texture of height 1)
                 declaraciones += fmt::format("#define s{0}_Texture1DDescriptorIndex s{0}_Textura\n", slot);

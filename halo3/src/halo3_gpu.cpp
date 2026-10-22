@@ -361,8 +361,10 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       if (shaders_.Cargar(biblioteca)) {
         std::fprintf(stderr, "[gpu] shader library: %zu shaders\n", shaders_.Cantidad());
       } else {
-        std::fprintf(stderr, "[gpu] no shader library at %s: geometry is not drawn\n", biblioteca.string().c_str());
+        std::fprintf(stderr, "[gpu] no shader library at %s: every shader is translated here\n",
+                     biblioteca.string().c_str());
       }
+      shaders_.HabilitarTraductor();  // what the library does not have
     }
     return destinos_ != nullptr;
   }
@@ -552,11 +554,12 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           const halo3::EstadisticasShaders e = shaders_.Estadisticas();
           std::fprintf(stderr,
                        "[gpu] swap#%llu draws=%llu copias=%llu dibujados=%llu sin_shaders=%llu | shaders: %llu distintos, "
-                       "%llu identificados (%llu aproximados), %llu sin identificar\n",
+                       "%llu identificados (%llu aproximados), %llu sin identificar (%llu traducidos, %llu fallidos)\n",
                        (unsigned long long)swaps_, (unsigned long long)draws_, (unsigned long long)copias_,
                        (unsigned long long)dibujados_, (unsigned long long)sin_shaders_,
                        (unsigned long long)e.distintos, (unsigned long long)e.identificados,
-                       (unsigned long long)e.aproximados, (unsigned long long)e.sin_identificar);
+                       (unsigned long long)e.aproximados, (unsigned long long)e.sin_identificar,
+                       (unsigned long long)e.traducidos, (unsigned long long)e.fallidos);
         }
         if (EnsureRenderer()) {
           destinos_->Presentar(presenter_.get(), rex::x360::LeerTexturaSwap(registers_.data()), 1280, 720);
@@ -790,6 +793,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           peticion.registros = registers_.data();
           peticion.vs = vs_actual_;
           peticion.ps = solo_profundidad ? nullptr : ps_actual_;
+          if (peticion.ps && halo3::ShadersHalo::EsTraducida(*peticion.vs) != halo3::ShadersHalo::EsTraducida(*peticion.ps)) {
+            // One from the library, one translated: their interpolators would not meet. Both translated.
+            if (!halo3::ShadersHalo::EsTraducida(*peticion.vs)) {
+              peticion.vs = shaders_.Traducida(true, vs_microcodigo_);
+            } else {
+              peticion.ps = shaders_.Traducida(false, ps_microcodigo_);
+            }
+          }
           peticion.vs_microcodigo = vs_microcodigo_;
           peticion.generacion_vs = generacion_vs_;
           // A new generation for everything on every draw: the renderer recomputes what it caches. Correct
@@ -799,7 +810,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           peticion.generacion_constantes_ps = generacion_;
           peticion.generacion_fetch = generacion_;
           peticion.generacion_encuadre = generacion_;
-          if (destinos_->Dibujar(peticion)) {
+          if (!peticion.vs || (!solo_profundidad && !peticion.ps)) {
+            ++sin_shaders_;  // the other half would not translate
+          } else if (destinos_->Dibujar(peticion)) {
             ++dibujados_;
           }
         } else {
@@ -878,7 +891,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint64_t dibujados_ = 0, sin_shaders_ = 0;
 
   void Identify(uint32_t type) {
-    if (type > 1 || !shaders_.cargada()) {
+    if (type > 1 || !shaders_.activo()) {
       return;
     }
     if (type == 0) {

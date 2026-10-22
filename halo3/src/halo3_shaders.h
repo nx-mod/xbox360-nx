@@ -8,6 +8,9 @@
 // Pixel shaders arrive as compiled and are matched exactly (fetch fields masked). Vertex shaders arrive patched by
 // D3D (fetches reordered, outputs the pixel shader does not read nulled), so they are matched by the candidate of
 // the same length with the most identical words, if that is clear enough.
+//
+// What the library does not have (or all of it, with no library) is translated on the console (halo3_traductor.h)
+// once the translator is enabled: the library is the fast path, the translator the complete one.
 #pragma once
 
 #include <cstdint>
@@ -25,6 +28,8 @@ struct EstadisticasShaders {
   uint64_t identificados = 0;
   uint64_t aproximados = 0;  // vertex shaders matched by score, not exactly
   uint64_t sin_identificar = 0;
+  uint64_t traducidos = 0;  // of those not identified, translated on the console
+  uint64_t fallidos = 0;    // and the ones the translator refused
 };
 
 class ShadersHalo {
@@ -34,8 +39,17 @@ class ShadersHalo {
   // false (with a log line) if the library is missing or damaged.
   bool Cargar(const std::filesystem::path& archivo);
   bool cargada() const;
-  // Microcode in host byte order, as the ring carries it. nullptr if not in the library. Ring thread only.
+  // Translates on the console what the library does not have (deko3d builds only; the renderer compiles the GLSL).
+  void HabilitarTraductor();
+  // Whether Identificar can answer at all: a library loaded or the translator enabled.
+  bool activo() const;
+  // Microcode in host byte order, as the ring carries it. nullptr if neither the library has it nor the translator
+  // could translate it. Ring thread only.
   const rex::x360::EntradaShader* Identificar(bool vertices, std::span<const uint32_t> microcodigo);
+  // The translator's version, library or not (nullptr if it cannot). A library shader and a translated one read
+  // their interpolators differently (by usage, by index), so a pair with one of each draws as two translations.
+  const rex::x360::EntradaShader* Traducida(bool vertices, std::span<const uint32_t> microcodigo);
+  static bool EsTraducida(const rex::x360::EntradaShader& e) { return !e.glsl.empty(); }
   EstadisticasShaders Estadisticas() const;
   size_t Cantidad() const;
 

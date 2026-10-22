@@ -1,0 +1,237 @@
+// shader_common.glsl - the GLSL version of shader_common.h for XenosRecomp's GLSL mode (XENOS_GLSL): microcode
+// translated at run time on the console, compiled by uam. The translator's output keeps the HLSL type and function
+// names; this prelude gives them their GLSL meaning, and defines __spirv__ and NFSMW_DEKO3D so the text takes its
+// deko3d branches (the constant blocks as UBOs, one combined sampler per register). The renderer puts #version 460
+// and G_ESPECIALIZACION (the pipeline's specialization bits) before it. Same meaning as the HLSL helpers.
+#ifndef SHADER_COMMON_GLSL
+#define SHADER_COMMON_GLSL
+
+#define __spirv__ 1
+#define NFSMW_DEKO3D 1
+
+// ---- HLSL names
+#define float2 vec2
+#define float3 vec3
+#define float4 vec4
+#define int2 ivec2
+#define int3 ivec3
+#define int4 ivec4
+#define uint2 uvec2
+#define uint3 uvec3
+#define uint4 uvec4
+#define bool4 bvec4
+#define frac fract
+#define rsqrt inversesqrt
+#define lerp mix
+#ifdef HALO3_VS
+#define clip(x)  // a vertex cannot be discarded: kills in vertex shaders do nothing
+#else
+#define clip(x) if ((x) < 0.0) discard
+#endif
+
+float asfloat(uint x) { return uintBitsToFloat(x); }
+vec2 asfloat(uvec2 x) { return uintBitsToFloat(x); }
+vec3 asfloat(uvec3 x) { return uintBitsToFloat(x); }
+vec4 asfloat(uvec4 x) { return uintBitsToFloat(x); }
+float asfloat(int x) { return intBitsToFloat(x); }
+vec4 asfloat(ivec4 x) { return intBitsToFloat(x); }
+uint asuint(float x) { return floatBitsToUint(x); }
+uvec2 asuint(vec2 x) { return floatBitsToUint(x); }
+uvec3 asuint(vec3 x) { return floatBitsToUint(x); }
+uvec4 asuint(vec4 x) { return floatBitsToUint(x); }
+float rcp(float x) { return 1.0 / x; }
+vec2 rcp(vec2 x) { return 1.0 / x; }
+vec3 rcp(vec3 x) { return 1.0 / x; }
+vec4 rcp(vec4 x) { return 1.0 / x; }
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+float saturate(bool x) { return x ? 1.0 : 0.0; }  // a saturated scalar comparison
+vec2 saturate(vec2 x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
+vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
+float select(bool c, float a, float b) { return c ? a : b; }
+vec4 select(bool c, vec4 a, float b) { return c ? a : vec4(b); }
+vec4 select(bool c, vec4 a, vec4 b) { return c ? a : b; }
+float f16tof32(uint x) { return unpackHalf2x16(x).x; }
+vec2 f16tof32(uvec2 x) { return vec2(unpackHalf2x16(x.x).x, unpackHalf2x16(x.y).x); }
+
+// ---- Per-component comparisons (HLSL's vector ==, >, >=, != give a mask; GLSL's give one bool)
+#define XENO_COMPARAR(N, F)                                                                    \
+  float N(float a, float b) { return F(vec4(a), vec4(b)).x ? 1.0 : 0.0; }                      \
+  vec2 N(vec2 a, vec2 b) { return vec2(F(a, b)); }                                             \
+  vec3 N(vec3 a, vec3 b) { return vec3(F(a, b)); }                                             \
+  vec4 N(vec4 a, vec4 b) { return vec4(F(a, b)); }
+XENO_COMPARAR(xeno_eq, equal)
+XENO_COMPARAR(xeno_gt, greaterThan)
+XENO_COMPARAR(xeno_ge, greaterThanEqual)
+XENO_COMPARAR(xeno_ne, notEqual)
+#define XENO_ALGUNO(N, F)                                                                      \
+  bool N(float a, float b) { return F(vec4(a), vec4(b)).x; }                                   \
+  bool N(vec2 a, vec2 b) { return any(F(a, b)); }                                              \
+  bool N(vec3 a, vec3 b) { return any(F(a, b)); }                                              \
+  bool N(vec4 a, vec4 b) { return any(F(a, b)); }
+XENO_ALGUNO(xeno_any_eq, equal)
+XENO_ALGUNO(xeno_any_gt, greaterThan)
+XENO_ALGUNO(xeno_any_ge, greaterThanEqual)
+XENO_ALGUNO(xeno_any_ne, notEqual)
+// CNDE/CNDGE/CNDGT: per component, src0 against 0 picks src1 or src2.
+#define XENO_CND(N, F)                                                                         \
+  float N(float a, float b, float c) { return F(vec4(a), vec4(0.0)).x ? b : c; }               \
+  vec2 N(vec2 a, vec2 b, vec2 c) { return mix(c, b, F(a, vec2(0.0))); }                        \
+  vec3 N(vec3 a, vec3 b, vec3 c) { return mix(c, b, F(a, vec3(0.0))); }                        \
+  vec4 N(vec4 a, vec4 b, vec4 c) { return mix(c, b, F(a, vec4(0.0))); }
+XENO_CND(xeno_cnd_eq, equal)
+XENO_CND(xeno_cnd_ge, greaterThanEqual)
+XENO_CND(xeno_cnd_gt, greaterThan)
+
+// ---- Specialization (the same bits as shader_common.h)
+#define SPEC_CONSTANT_R11G11B10_NORMAL  (1u << 0)
+#define SPEC_CONSTANT_ALPHA_TEST        (1u << 1)
+#define SPEC_CONSTANT_INV_TAMANO_TEX    (1u << 9)
+#define SPEC_CONSTANT_PCF_BARATO        (1u << 15)
+#define SPEC_CONSTANT_SIN_DESENFOQUE    (1u << 19)
+#define SPEC_CONSTANT_SOMBRA_MINIMO     (1u << 23)
+#define SPEC_CONSTANT_ALPHA_FUNC_SHIFT  16u
+#define SPEC_CONSTANT_ALPHA_FUNC_MASK   (7u << 16)
+#ifndef G_ESPECIALIZACION
+#define G_ESPECIALIZACION 0u
+#endif
+#define g_SpecConstants() uint(G_ESPECIALIZACION)
+#define FLT_MIN uintBitsToFloat(0xff7fffffu)
+#define FLT_MAX uintBitsToFloat(0x7f7fffffu)
+
+// ---- Constant blocks: the renderer's UBOs 0-3 (vertex, pixel, shared, Halo 3's booleans and loop constants)
+layout(std140, binding = 0) uniform NfsmwBloqueVs { vec4 v[256]; } g_UboVertex;
+layout(std140, binding = 1) uniform NfsmwBloquePs { vec4 v[256]; } g_UboPixel;
+layout(std140, binding = 2) uniform NfsmwBloqueCompartidas { vec4 v[31]; } g_UboCompartidas;
+layout(std140, binding = 3) uniform Halo3BooleanBlock { uvec4 b[2]; uvec4 bucles[8]; } g_Halo3Booleans;
+#define NFSMW_COMPARTIDA_UINT(B)  floatBitsToUint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
+#define NFSMW_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]
+#define g_Booleans                 NFSMW_COMPARTIDA_UINT(256)
+#define g_SwappedTexcoords         NFSMW_COMPARTIDA_UINT(260)
+#define g_HalfPixelOffset          vec2(NFSMW_COMPARTIDA_FLOAT(264), NFSMW_COMPARTIDA_FLOAT(268))
+#define g_AlphaThreshold           NFSMW_COMPARTIDA_FLOAT(272)
+#define g_NdcScale                 vec2(NFSMW_COMPARTIDA_FLOAT(280), NFSMW_COMPARTIDA_FLOAT(284))
+#define g_NdcOffset                vec2(NFSMW_COMPARTIDA_FLOAT(288), NFSMW_COMPARTIDA_FLOAT(292))
+#define g_InputRemap(LOC)          NFSMW_COMPARTIDA_UINT(296 + (LOC) * 4)
+// The guest vertex index (r0.x): the draw rebases its indices by the first vertex, which the renderer puts at 488.
+#define XENO_INDICE_VERTICE        (gl_VertexID + int(NFSMW_COMPARTIDA_UINT(488)))
+#define halo_bool(A) ((g_Halo3Booleans.b[((A) >> 7) & 1][((A) >> 5) & 3] >> ((A) & 31)) & 1u)
+ivec4 halo_loop(uint n) {
+  uint v = g_Halo3Booleans.bucles[n >> 2][n & 3u];
+  return ivec4(int(v & 0xFFu), int((v >> 8) & 0xFFu), int(v << 8) >> 24, 0);
+}
+
+// ---- Texture fetches: combined samplers; the HLSL "sampler" argument is a dummy int. Vertex shaders sample level 0.
+#ifdef HALO3_VS
+#define XENO_MUESTRA(t, c) textureLod(t, c, 0.0)
+#else
+#define XENO_MUESTRA(t, c) texture(t, c)
+#endif
+vec4 tfetch2D(sampler2D t, int s, vec2 uv, vec2 offset, vec2 invSize) {
+  vec2 d = (g_SpecConstants() & SPEC_CONSTANT_INV_TAMANO_TEX) != 0u ? offset * invSize : offset / vec2(textureSize(t, 0));
+  return XENO_MUESTRA(t, uv + d);
+}
+vec4 getWeights2D(sampler2D t, int s, vec2 uv, vec2 offset, vec2 invSize) {
+  vec2 f = fract(uv * vec2(textureSize(t, 0)) + offset - 0.5);
+  return vec4(isnan(uv.x) ? 0.0 : f.x, isnan(uv.y) ? 0.0 : f.y, 0.0, 0.0);
+}
+vec4 tfetch1D(sampler2D t, int s, float u) { return XENO_MUESTRA(t, vec2(u, 0.5)); }
+vec4 getWeights1D(sampler2D t, int s, float u) {
+  return vec4(isnan(u) ? 0.0 : fract(u * float(textureSize(t, 0).x) - 0.5), 0.0, 0.0, 0.0);
+}
+vec4 tfetch3D(sampler3D t, int s, vec3 uvw) { return XENO_MUESTRA(t, uvw); }
+
+struct CubeMapData {
+  vec3 cubeMapDirections[2];
+  uint cubeMapIndex;
+};
+CubeMapData xeno_cubo_vacio() { return CubeMapData(vec3[2](vec3(0.0), vec3(0.0)), 0u); }
+vec4 tfetchCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {
+  return XENO_MUESTRA(t, c.cubeMapDirections[int(uvw.z)]);
+}
+// The bilinear weights on the face the direction lands on (getWeights on a cube map).
+vec4 getWeightsCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {
+  vec3 d = c.cubeMapDirections[int(uvw.z)], a = abs(d);
+  vec2 uv = a.x >= a.y && a.x >= a.z ? d.zy / a.x : a.y >= a.z ? d.xz / a.y : d.xy / max(a.z, 1e-20);
+  vec2 f = fract((uv * 0.5 + 0.5) * float(textureSize(t, 0).x) - 0.5);
+  return vec4(f, 0.0, 0.0);
+}
+vec4 cube(vec4 value, inout CubeMapData c) {
+  uint index = c.cubeMapIndex;
+  c.cubeMapDirections[index] = value.xyz;
+  ++c.cubeMapIndex;
+  return vec4(0.0, 0.0, 0.0, float(index));
+}
+
+vec4 tfetchTexcoord(uint swappedTexcoords, vec4 value, uint semanticIndex) {
+  return (swappedTexcoords & (1u << semanticIndex)) != 0u ? value.yxwz : value;
+}
+// 3 bits per component: 0-3 = data component, 4 = 0, 5 = 1, 7 = unchanged.
+vec4 remapInput(vec4 value, uint code) {
+  if (code == 0xFFFu) return value;
+  vec4 r = value;
+  for (uint i = 0u; i < 4u; i++) {
+    uint source = (code >> (i * 3u)) & 7u;
+    if (source < 4u) r[i] = value[source];
+    else if (source == 4u) r[i] = 0.0;
+    else if (source == 5u) r[i] = 1.0;
+  }
+  return r;
+}
+float alphaTestValue(float alpha) {
+  bool pass = true;
+  switch ((g_SpecConstants() & SPEC_CONSTANT_ALPHA_FUNC_MASK) >> SPEC_CONSTANT_ALPHA_FUNC_SHIFT) {
+    case 0u: pass = false; break;
+    case 1u: pass = alpha < g_AlphaThreshold; break;
+    case 2u: pass = alpha == g_AlphaThreshold; break;
+    case 3u: pass = alpha <= g_AlphaThreshold; break;
+    case 4u: pass = alpha > g_AlphaThreshold; break;
+    case 5u: pass = alpha != g_AlphaThreshold; break;
+    case 6u: pass = alpha >= g_AlphaThreshold; break;
+    default: break;
+  }
+  return pass ? 1.0 : -1.0;
+}
+vec4 dst(vec4 a, vec4 b) { return vec4(1.0, a.y * b.y, a.z, b.w); }
+vec4 max4(vec4 a) { return vec4(max(max(a.x, a.y), max(a.z, a.w))); }
+
+// ---- Vertex fetches with no element (halo_vfetch_<slot>, declared per shader): decode one element from its words,
+// first component in the low bits (the renderer byte-swaps as for vertex data).
+int xeno_ext(uint w, uint pos, uint bits, bool sgn) {
+  uint v = (w >> pos) & ((1u << bits) - 1u);
+  return sgn ? (int(v << (32u - bits)) >> (32u - bits)) : int(v);
+}
+float xeno_comp(uint w, uint pos, uint bits, uint sgn, uint entero) {
+  int v = xeno_ext(w, pos, bits, sgn != 0u);
+  if (entero != 0u) return float(v);
+  return sgn != 0u ? max(float(v) / float((1u << (bits - 1u)) - 1u), -1.0) : float(v) / float((1u << bits) - 1u);
+}
+vec4 halo_vf_decodificar(uint w0, uint w1, uint w2, uint w3, uint f, uint sg, uint en, int ex) {
+  vec4 r = vec4(0.0, 0.0, 0.0, 1.0);
+  switch (f) {
+    case 6u: r = vec4(xeno_comp(w0, 0u, 8u, sg, en), xeno_comp(w0, 8u, 8u, sg, en), xeno_comp(w0, 16u, 8u, sg, en),
+                      xeno_comp(w0, 24u, 8u, sg, en)); break;  // k_8_8_8_8
+    case 7u: r = vec4(xeno_comp(w0, 0u, 10u, sg, en), xeno_comp(w0, 10u, 10u, sg, en), xeno_comp(w0, 20u, 10u, sg, en),
+                      xeno_comp(w0, 30u, 2u, sg, en)); break;  // k_2_10_10_10
+    case 16u: r.xyz = vec3(xeno_comp(w0, 0u, 11u, sg, en), xeno_comp(w0, 11u, 11u, sg, en),
+                           xeno_comp(w0, 22u, 10u, sg, en)); break;  // k_10_11_11
+    case 17u: r.xyz = vec3(xeno_comp(w0, 0u, 10u, sg, en), xeno_comp(w0, 10u, 11u, sg, en),
+                           xeno_comp(w0, 21u, 11u, sg, en)); break;  // k_11_11_10
+    case 25u: r.xy = vec2(xeno_comp(w0, 0u, 16u, sg, en), xeno_comp(w0, 16u, 16u, sg, en)); break;  // k_16_16
+    case 26u: r = vec4(xeno_comp(w0, 0u, 16u, sg, en), xeno_comp(w0, 16u, 16u, sg, en), xeno_comp(w1, 0u, 16u, sg, en),
+                       xeno_comp(w1, 16u, 16u, sg, en)); break;  // k_16_16_16_16
+    case 31u: r.xy = unpackHalf2x16(w0); break;  // k_16_16_FLOAT
+    case 32u: r = vec4(unpackHalf2x16(w0), unpackHalf2x16(w1)); break;  // k_16_16_16_16_FLOAT
+    case 33u: r.x = sg != 0u ? float(int(w0)) : float(w0); break;  // k_32
+    case 34u: r.xy = sg != 0u ? vec2(ivec2(w0, w1)) : vec2(w0, w1); break;  // k_32_32
+    case 35u: r = sg != 0u ? vec4(ivec4(w0, w1, w2, w3)) : vec4(w0, w1, w2, w3); break;  // k_32_32_32_32
+    case 36u: r.x = uintBitsToFloat(w0); break;  // k_32_FLOAT
+    case 37u: r.xy = uintBitsToFloat(uvec2(w0, w1)); break;  // k_32_32_FLOAT
+    case 38u: r = uintBitsToFloat(uvec4(w0, w1, w2, w3)); break;  // k_32_32_32_32_FLOAT
+    case 57u: r.xyz = uintBitsToFloat(uvec3(w0, w1, w2)); break;  // k_32_32_32_FLOAT
+    default: break;
+  }
+  return ex != 0 ? r * exp2(float(ex)) : r;
+}
+
+#endif

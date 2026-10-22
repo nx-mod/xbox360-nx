@@ -15,6 +15,7 @@ set(HALO3_SOURCES
     src/main.cpp
     src/halo3_gpu.cpp
     src/halo3_shaders.cpp
+    src/halo3_traductor.cpp  # XenosRecomp's GLSL mode, built in (one file: its defines shape its classes)
     ${CMAKE_CURRENT_SOURCE_DIR}/../nfsmw_pal/src/nfsmw_shader_library.cpp  # the library file format
     src/halo3_hooks.cpp
 )
@@ -26,6 +27,16 @@ else()
 endif()
 
 rexglue_setup_target(halo3)
+
+# The run-time translator's prelude (src/halo3_traductor.cpp): shaders/XenosRecomp/shader_common.glsl as a string,
+# rewritten only when the file changes.
+set(HALO3_PRELUDIO "${CMAKE_CURRENT_SOURCE_DIR}/../shaders/XenosRecomp/shader_common.glsl")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${HALO3_PRELUDIO}")
+file(READ "${HALO3_PRELUDIO}" HALO3_PRELUDIO_GLSL)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generado/halo3_preludio_glsl.h"
+     CONTENT "// Generated from shaders/XenosRecomp/shader_common.glsl by halo3/CMakeLists.txt.\n#pragma once\ninline constexpr char kPreludioGlsl[] = R\"preludio(@HALO3_PRELUDIO_GLSL@)preludio\";\n"
+     @ONLY)
+target_include_directories(halo3 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generado")
 
 # deko3d (the Switch build): the SDK's shared presentation layer (sdk/src/ui/deko3d: device, swapchain, presenter,
 # ImGui overlay, the uam compile worker). The game's frames come with the renderer.
