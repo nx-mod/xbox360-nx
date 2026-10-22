@@ -304,6 +304,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   void WriteMmioRegister(uint32_t address, uint32_t value) {
     const uint32_t r = (address & 0xFFFF) / 4;
     if (r < kRegisterCount) {
+      Cambio(r, value);
       registers_[r] = value;  // no side effects through MMIO (graphics_system.cpp)
     }
     if (r == kRegCpRbWptr) {
@@ -320,6 +321,29 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint32_t Register(uint32_t index) const { return index < kRegisterCount ? registers_[index] : 0; }
 
   // Register writes from the ring, with the side effects the game relies on.
+  // What a register write changes, for the renderer's caches (as NFS's sink does, nfsmw_nativo_sistema.cpp): only a
+  // value that really changes counts. The constants (0x4000-0x47FF, VS then PS) also mark the range written since
+  // the last draw, so the renderer compares only those; the fetch constants (0x4800-0x48BF) and the framing state
+  // (window, scissor, viewport, clip) have their own generations.
+  void Cambio(uint32_t index, uint32_t value) {
+    if (registers_[index] == value) {
+      return;
+    }
+    if (index >= 0x4000 && index < 0x4800) {
+      const bool vs = index < 0x4400;
+      ++(vs ? generacion_constantes_vs_ : generacion_constantes_ps_);
+      uint32_t* s = sucio_constantes_ + (vs ? 0 : 2);
+      const uint32_t reg = (index - (vs ? 0x4000 : 0x4400)) >> 2;
+      s[0] = std::min(s[0], reg);
+      s[1] = std::max(s[1], reg + 1);
+    } else if (index >= 0x4800 && index <= 0x48BF) {
+      ++generacion_fetch_;
+    } else if ((index >= 0x2080 && index <= 0x2082) || (index >= 0x210F && index <= 0x2114) ||
+               (index >= 0x2204 && index <= 0x2206) || index == 0x2302) {
+      ++generacion_encuadre_;  // PA_SC_WINDOW_OFFSET..SCISSOR_BR, PA_CL_VPORT_*, CLIP/SC_MODE/VTE_CNTL, VTX_CNTL
+    }
+  }
+
   void WriteRegister(uint32_t index, uint32_t value) {
     if (index >= kRegisterCount) {
       return;
@@ -327,6 +351,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (index == rex::graphics::XE_GPU_REG_COHER_STATUS_HOST) {
       value |= UINT32_C(0x80000000);
     }
+    Cambio(index, value);
     registers_[index] = value;
     // Scratch registers are mirrored to memory (SCRATCH_ADDR) for the ones SCRATCH_UMSK selects: the game
     // waits on those values to know where the GPU is.
@@ -829,13 +854,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           peticion.ps = par_.ps;
           peticion.vs_microcodigo = vs_microcodigo_;
           peticion.generacion_vs = generacion_vs_;
-          // A new generation for everything on every draw: the renderer recomputes what it caches. Correct
-          // before fast; the change tracking NFS has comes once there is a picture.
-          ++generacion_;
-          peticion.generacion_constantes_vs = generacion_;
-          peticion.generacion_constantes_ps = generacion_;
-          peticion.generacion_fetch = generacion_;
-          peticion.generacion_encuadre = generacion_;
+          peticion.generacion_constantes_vs = generacion_constantes_vs_;
+          peticion.generacion_constantes_ps = generacion_constantes_ps_;
+          peticion.sucio_constantes = sucio_constantes_;
+          peticion.generacion_fetch = generacion_fetch_;
+          peticion.generacion_encuadre = generacion_encuadre_;
           if (destinos_->Dibujar(peticion)) {
             ++dibujados_;
           }
@@ -911,7 +934,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::vector<uint32_t> vs_microcodigo_, ps_microcodigo_;
   const rex::x360::EntradaShader* vs_actual_ = nullptr;
   const rex::x360::EntradaShader* ps_actual_ = nullptr;
-  uint64_t generacion_vs_ = 0, generacion_ps_ = 0, generacion_ = 0;
+  uint64_t generacion_vs_ = 0, generacion_ps_ = 0;
+  // Bumped by Cambio when a register of that kind really changes; the renderer redoes only what they cover.
+  uint64_t generacion_constantes_vs_ = 1, generacion_constantes_ps_ = 1, generacion_fetch_ = 1, generacion_encuadre_ = 1;
+  // Constant registers [desde, hasta) written since the last draw, VS (0, 1) and PS (2, 3); the renderer resets it.
+  uint32_t sucio_constantes_[4] = {256, 0, 256, 0};
   // The pair the last draw used, while its shaders and interpolator count stay the same.
   struct Par {
     uint64_t generacion_vs = ~uint64_t(0), generacion_ps = ~uint64_t(0);
