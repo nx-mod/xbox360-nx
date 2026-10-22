@@ -2,9 +2,12 @@
 
 ## Need for Speed: Most Wanted
 
-1. **Bloom downsample in two passes** (in progress). The first 320x180 pass reads 16 spread taps per pixel and takes
-   2.4 ms of a ~25 ms GPU frame, 95 % of it texture reads. A 640x360 pre-pass of 2x2 averages lets the game's own
-   shader run with taps on texel centers: the same result with cache-friendly reads.
+1. **Bloom downsample in two passes.** The first 320x180 pass (PS `p_000091`, n65 USA / n77 PAL, `huella`
+   0xABE81C36A1A89DEC) reads 16 spread taps per pixel and takes 2.4 ms of a ~25 ms GPU frame, 95 % of it texture
+   reads. Its taps sit on texel corners (offsets +-2 and +-6 source texels), so each is a 2x2 average: a 640x360
+   pre-pass where texel k = average of source 2k-1 and 2k (both axes), then the game's shader on that texture with
+   offsets -2.5, -0.5, 1.5, 3.5 half-res texels, gives the same sums with cache-friendly reads (only the last column
+   differs). Only when the constants match that pattern; a setting to turn it off. Model the pass on `Copiar3D`.
 2. **Cracked glass**: near the end of the career intro the screen goes dark instead of showing cracked glass. Ruled
    out so far are in the [devlog](docs/deko3d-devlog.md). Next: a diagnostic that writes only around that moment.
 3. **`nfsmw_intervalo_presentacion = "inmediato"`**: test on the console (menus above 30 FPS; check that movies keep
