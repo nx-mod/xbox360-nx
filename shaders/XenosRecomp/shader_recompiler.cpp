@@ -234,8 +234,29 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             cerrarSiEscribePredicado(marcaPredicado);
             return;
         }
-        const uint32_t slot = instr.constIndex * 3 + instr.constIndexSelect;
+        // A mini fetch takes the fetch constant and the stride of the full fetch before it (as Xenia reads them):
+        // its own fields for those are not meaningful.
+        if (!instr.isMiniFetch)
+        {
+            ultimoSlotVf = instr.constIndex * 3 + instr.constIndexSelect;
+            ultimaZancadaVf = instr.stride;
+        }
+        const uint32_t slot = ultimoSlotVf;
+        const uint32_t zancada = ultimaZancadaVf;
         slotsVf.insert(slot);
+        {
+            // What each slot's fetches read around vertex i: dwords i * stride + [min, max] (with the 4 a fetch may
+            // read). The renderer uploads only that range of the vertices a draw uses.
+            auto [it, nuevo] = alcanceVf.try_emplace(slot, AlcanceVf{zancada, int32_t(instr.offset), int32_t(instr.offset) + 4});
+            AlcanceVf& a = it->second;
+            if (!nuevo)
+            {
+                if (a.zancada != zancada)
+                    a.zancada = 0;  // mixed strides: the whole buffer
+                a.minimo = std::min(a.minimo, int32_t(instr.offset));
+                a.maximo = std::max(a.maximo, int32_t(instr.offset) + 4);
+            }
+        }
         if (!instr.isMiniFetch)
         {
             indent();
@@ -246,9 +267,9 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         print("r{}.", uint32_t(instr.dstRegister));
         printDstSwizzle(instr.dstSwizzle, false);
 #ifdef XENOS_GLSL
-        print(" = halo_vfetch_{}(vfIndice * {} + ({}), {}u, {}u, {}u, {}).", slot, uint32_t(instr.stride),
+        print(" = halo_vfetch_{}(vfIndice * {} + ({}), {}u, {}u, {}u, {}).", slot, zancada,
 #else
-        print(" = halo_vfetch(g_vf{}, vfIndice * {} + ({}), {}, {}, {}, {}).", slot, uint32_t(instr.stride),
+        print(" = halo_vfetch(g_vf{}, vfIndice * {} + ({}), {}, {}, {}, {}).", slot, zancada,
 #endif
             int32_t(instr.offset), uint32_t(instr.format), uint32_t(instr.signedRfModeAll), uint32_t(instr.numFormatAll),
             int32_t(instr.expAdjust));
@@ -1729,12 +1750,38 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // GLSL: inputs and outputs are globals at explicit locations and main takes nothing. Interpolators sit at their
     // index in INTERPOLATORS (TEXCOORDn = n, COLORn = 16 + n, as the renderer counts them); vertex inputs in
     // element order, as for HLSL (HALO3_RECOMP).
+    // With soloInterpoladoresDelContenedor, which entries of INTERPOLATORS the container lists.
+    std::vector<bool> declarado(std::size(INTERPOLATORS), !soloInterpoladoresDelContenedor);
+    if (soloInterpoladoresDelContenedor)
+    {
+        const uint32_t cuantos = (shader->interpolatorInfo >> 5) & 0x1F;
+        for (uint32_t i = 0; i < cuantos; i++)
+        {
+            union
+            {
+                Interpolator interpolator;
+                uint32_t value;
+            };
+            if (isPixelShader)
+                value = reinterpret_cast<const PixelShader*>(shader)->interpolators[i];
+            else
+            {
+                auto vs = reinterpret_cast<const VertexShader*>(shader);
+                value = vs->vertexElementsAndInterpolators[vs->field18 + vs->vertexElementCount + i];
+            }
+            for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
+                if (INTERPOLATORS[k].first == interpolator.usage && INTERPOLATORS[k].second == interpolator.usageIndex)
+                    declarado[k] = true;
+        }
+    }
+    interpoladoresDeclarados = declarado;
     if (isPixelShader)
     {
         out += "#define iPos gl_FragCoord\n#define iFace gl_FrontFacing\n";
         for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
-            println("layout(location = {}) in float4 i{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
-                INTERPOLATORS[k].second);
+            if (declarado[k])
+                println("layout(location = {}) in float4 i{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
+                    INTERPOLATORS[k].second);
         auto pixelShader = reinterpret_cast<const PixelShader*>(shader);
         for (uint32_t c = 0; c < 4; c++)
             if (pixelShader->outputs & (PIXEL_SHADER_OUTPUT_COLOR0 << c))
@@ -1763,8 +1810,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         }
         out += "#define oPos gl_Position\n";
         for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
-            println("layout(location = {}) out float4 o{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
-                INTERPOLATORS[k].second);
+            if (declarado[k])
+                println("layout(location = {}) out float4 o{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
+                    INTERPOLATORS[k].second);
     }
     out += "void main()\n";
 #else
@@ -1974,11 +2022,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             out += "\toPos = 0.0;\n";
     #endif
 
-        for (auto& [usage, usageIndex] : INTERPOLATORS)
+        for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
 #ifdef XENOS_GLSL
-            println("\to{}{} = float4(0.0);", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+            if (interpoladoresDeclarados.empty() || interpoladoresDeclarados[k])
+                println("\to{}{} = float4(0.0);", USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
+                    INTERPOLATORS[k].second);
 #else
-            println("\to{}{} = 0.0;", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+            println("\to{}{} = 0.0;", USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)], INTERPOLATORS[k].second);
 #endif
 
         out += "\n";
@@ -2604,6 +2654,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             if (enlace == 16)
                 declaraciones += "#error \"more than 16 vertex fetch buffers\"\n";
 #ifdef XENOS_GLSL
+            // What it reads per vertex (stride and offsets in dwords; stride 0 = mixed, the whole buffer), for the
+            // renderer (rex/ui/deko3d/glsl.h, GlslDeTraductor).
+            if (const auto alc = alcanceVf.find(slot); alc != alcanceVf.end())
+                declaraciones += fmt::format("// xeno_vf {} {} {} {} {}\n", enlace, slot, alc->second.zancada,
+                    alc->second.minimo, alc->second.maximo);
             // GLSL cannot pass a buffer block to a function: one accessor per slot, then the shared decoder.
             declaraciones += fmt::format("layout(std430, binding = {0}) readonly buffer XenoVf{1} {{ uint d[]; }} g_vf{1};\n"
                 "float4 halo_vfetch_{1}(int dword, uint f, uint sg, uint en, int ex) {{ uint a = uint(max(dword, 0)); "

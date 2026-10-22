@@ -4,6 +4,7 @@
 #include "shader_code.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -11,6 +12,13 @@
 struct StringBuffer
 {
     std::string out;
+#ifdef XENOS_GLSL
+    // Only the interpolators the container lists are declared (vertex shader outputs, pixel shader inputs), not
+    // all of INTERPOLATORS: the run-time translator gives each pair its exact count, and every declared output is
+    // computed and carried per vertex (25 of them made Halo 3's vertex shaders 155 registers wide).
+    bool soloInterpoladoresDelContenedor = false;
+    std::vector<bool> interpoladoresDeclarados;  // set while translating, for the outputs' initial values
+#endif
 
     template<class... Args>
     void print(fmt::format_string<Args...> fmt, Args&&... args)
@@ -32,6 +40,9 @@ struct ShaderRecompiler : StringBuffer
 #ifdef HALO3_RECOMP
     std::vector<uint32_t> ordenEntradas;  // (usage << 4 | index) of each vertex input, in location order
     std::set<uint32_t> slotsVf;           // vertex fetch slots read as buffers (no vertex element)
+    uint32_t ultimoSlotVf = 0, ultimaZancadaVf = 0;  // the last full vertex fetch's (mini fetches inherit them)
+    struct AlcanceVf { uint32_t zancada; int32_t minimo, maximo; };  // dwords around i * stride
+    std::map<uint32_t, AlcanceVf> alcanceVf;
     size_t marcaBuffersVf = 0;            // where their declarations go
     std::map<uint32_t, uint32_t> samplersHalo;  // texture fetch slot -> TextureDimension, without a constant table
     std::set<uint32_t> enterosDefinidos;        // integer constants the definition table gives

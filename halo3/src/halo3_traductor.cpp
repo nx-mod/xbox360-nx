@@ -20,8 +20,8 @@
 
 namespace halo3 {
 
-bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, rex::x360::EntradaShader& e,
-                         std::string& error) {
+bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
+                         rex::x360::EntradaShader& e, std::string& error) {
   if (microcodigo.empty() || microcodigo.size() > 0x10000) {
     error = "microcodigo vacio o demasiado largo";
     return false;
@@ -29,7 +29,7 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, r
   std::string texto;
   uint32_t salidas = 0;
   try {
-    texto = nucleo::Traducir(vertices, microcodigo, kPreludioGlsl, salidas);
+    texto = nucleo::Traducir(vertices, microcodigo, kPreludioGlsl, salidas, interpoladores);
   } catch (const std::exception& excepcion) {
     error = excepcion.what();
     return false;

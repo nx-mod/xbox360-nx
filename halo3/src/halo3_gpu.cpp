@@ -805,19 +805,28 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         }
         // In depth-only mode (5) the vertex shader is enough.
         const bool solo_profundidad = (Register(rex::graphics::XE_GPU_REG_RB_MODECONTROL) & 0x7) == 5;
-        if (vs_actual_ && (ps_actual_ || solo_profundidad)) {
+        // The pair: from the library when both shaders are in it, otherwise both translated for the interpolator
+        // count the vertex shader exports (SQ_PROGRAM_CNTL's vs_export_count + 1): only those are declared, so the
+        // vertex shader computes and carries no more than the pixel shader reads. Worked out again only when a
+        // shader or the count changes.
+        const uint32_t interpoladores =
+            std::min(16u, ((Register(rex::graphics::XE_GPU_REG_SQ_PROGRAM_CNTL) >> 20) & 0xF) + 1);
+        if (par_.generacion_vs != generacion_vs_ || par_.generacion_ps != generacion_ps_ ||
+            par_.interpoladores != interpoladores || par_.solo_profundidad != solo_profundidad) {
+          par_ = Par{generacion_vs_, generacion_ps_, interpoladores, solo_profundidad, nullptr, nullptr};
+          if (vs_actual_ && (solo_profundidad || ps_actual_)) {
+            par_.vs = vs_actual_;
+            par_.ps = solo_profundidad ? nullptr : ps_actual_;
+          } else if (shaders_.activo()) {
+            par_.vs = shaders_.Traducida(true, vs_microcodigo_, interpoladores);
+            par_.ps = solo_profundidad ? nullptr : shaders_.Traducida(false, ps_microcodigo_, interpoladores);
+          }
+        }
+        if (par_.vs && (par_.ps || solo_profundidad)) {
           rex::x360::PeticionDibujo peticion;
           peticion.registros = registers_.data();
-          peticion.vs = vs_actual_;
-          peticion.ps = solo_profundidad ? nullptr : ps_actual_;
-          if (peticion.ps && halo3::ShadersHalo::EsTraducida(*peticion.vs) != halo3::ShadersHalo::EsTraducida(*peticion.ps)) {
-            // One from the library, one translated: their interpolators would not meet. Both translated.
-            if (!halo3::ShadersHalo::EsTraducida(*peticion.vs)) {
-              peticion.vs = shaders_.Traducida(true, vs_microcodigo_);
-            } else {
-              peticion.ps = shaders_.Traducida(false, ps_microcodigo_);
-            }
-          }
+          peticion.vs = par_.vs;
+          peticion.ps = par_.ps;
           peticion.vs_microcodigo = vs_microcodigo_;
           peticion.generacion_vs = generacion_vs_;
           // A new generation for everything on every draw: the renderer recomputes what it caches. Correct
@@ -827,9 +836,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           peticion.generacion_constantes_ps = generacion_;
           peticion.generacion_fetch = generacion_;
           peticion.generacion_encuadre = generacion_;
-          if (!peticion.vs || (!solo_profundidad && !peticion.ps)) {
-            ++sin_shaders_;  // the other half would not translate
-          } else if (destinos_->Dibujar(peticion)) {
+          if (destinos_->Dibujar(peticion)) {
             ++dibujados_;
           }
         } else {
@@ -904,7 +911,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::vector<uint32_t> vs_microcodigo_, ps_microcodigo_;
   const rex::x360::EntradaShader* vs_actual_ = nullptr;
   const rex::x360::EntradaShader* ps_actual_ = nullptr;
-  uint64_t generacion_vs_ = 0, generacion_ = 0;
+  uint64_t generacion_vs_ = 0, generacion_ps_ = 0, generacion_ = 0;
+  // The pair the last draw used, while its shaders and interpolator count stay the same.
+  struct Par {
+    uint64_t generacion_vs = ~uint64_t(0), generacion_ps = ~uint64_t(0);
+    uint32_t interpoladores = 0;
+    bool solo_profundidad = false;
+    const rex::x360::EntradaShader* vs = nullptr;
+    const rex::x360::EntradaShader* ps = nullptr;
+  } par_;
   uint64_t dibujados_ = 0, sin_shaders_ = 0;
 
   void Identify(uint32_t type) {
@@ -917,6 +932,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       ++generacion_vs_;
     } else {
       ps_actual_ = shaders_.Identificar(false, ps_microcodigo_);
+      ++generacion_ps_;
     }
   }
   uint64_t bin_mask_ = ~uint64_t(0);

@@ -16,7 +16,8 @@
 namespace halo3 {
 
 // `microcodigo` in host byte order, as the ring carries it. false with the reason in `error`.
-bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, rex::x360::EntradaShader& entrada,
-                         std::string& error);
+// `interpoladores`: the pair's interpolator count (SQ_PROGRAM_CNTL's vs_export_count + 1).
+bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
+                         rex::x360::EntradaShader& entrada, std::string& error);
 
 }  // namespace halo3

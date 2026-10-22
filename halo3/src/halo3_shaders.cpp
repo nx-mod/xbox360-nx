@@ -230,12 +230,6 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
     if (!exacto) ++d.estadisticas.aproximados;
   } else {
     ++d.estadisticas.sin_identificar;
-    if (d.traductor) {
-      if (const EntradaShader* t = Traducida(vertices, microcodigo)) {
-        d.cache.emplace(clave, t);
-        return t;
-      }
-    }
     if (d.avisos++ < kMaxAvisos) {
       // To stderr (it survives closing the game) and the microcode to logs/rex/, to compare with the library.
       std::fprintf(stderr, "[halo3] %s shader sin identificar: %zu palabras, huella %016llX, mejor parecido %zu y segundo %zu\n",
@@ -256,16 +250,17 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
   return elegido;
 }
 
-const EntradaShader* ShadersHalo::Traducida(bool vertices, std::span<const uint32_t> microcodigo) {
+const EntradaShader* ShadersHalo::Traducida(bool vertices, std::span<const uint32_t> microcodigo,
+                                           uint32_t interpoladores) {
   Datos& d = *datos_;
   if (!d.traductor) return nullptr;
-  const uint64_t clave = Clave(vertices, microcodigo);
+  const uint64_t clave = Clave(vertices, microcodigo) ^ (uint64_t(interpoladores) << 56);
   if (const auto it = d.cache_traducidas.find(clave); it != d.cache_traducidas.end()) return it->second;
   const EntradaShader* r = nullptr;
 #if HALO3_DEKO3D
   EntradaShader& e = d.traducidas.emplace_back();
   std::string error;
-  if (TraducirMicrocodigo(vertices, microcodigo, e, error)) {
+  if (TraducirMicrocodigo(vertices, microcodigo, interpoladores, e, error)) {
     e.numero = uint32_t(0x80000000u | (d.traducidas.size() - 1));  // reports: translated, not in the library
     ++d.estadisticas.traducidos;
     r = &e;

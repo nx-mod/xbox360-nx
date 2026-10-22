@@ -13,10 +13,12 @@
 // The renderer fills the constants by register, as the Xbox 360 GPU sees them, so no names are needed at run time.
 //
 // ContenedorDeMicrocodigo wraps raw microcode, as the ring carries it, the way Xenia reads a shader: no vertex
-// elements (every vertex fetch is a load from its buffer by r0.x, the vertex index), and 16 interpolators by index
-// (vertex shader export k is TEXCOORDk, which is pixel shader register k).
+// elements (every vertex fetch is a load from its buffer by r0.x, the vertex index), and the pair's interpolators by
+// index (vertex shader export k is TEXCOORDk, which is pixel shader register k): as many as SQ_PROGRAM_CNTL says the
+// vertex shader exports (vs_export_count + 1), at most 16.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -113,7 +115,8 @@ inline constexpr uint32_t kUsoTexcoord = 5;  // DeclUsage::TexCoord
  * Each interpolator word is usageIndex | usage << 4 | reg << 8 (shader.h's Interpolator).
  */
 inline std::vector<uint8_t> ContenedorDeMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo,
-                                                    uint32_t salidas) {
+                                                    uint32_t salidas, uint32_t interpoladores = kInterpoladores) {
+  interpoladores = std::min(interpoladores, kInterpoladores);
   constexpr size_t kShader = 36;  // right after the ShaderContainer header
   // Shader (24 bytes), VertexShader's 3 words (PixelShader's 2), then the interpolators.
   const size_t virtuales = (kShader + 36 + kInterpoladores * 4 + 15) & ~size_t(15);
@@ -126,7 +129,7 @@ inline std::vector<uint8_t> ContenedorDeMicrocodigo(bool vertices, std::span<con
   PonerBE32(v, kShader + 0, 0);                         // physicalOffset
   PonerBE32(v, kShader + 4, uint32_t(fisicos));         // size
   PonerBE32(v, kShader + 12, 0xFFu << 8);               // fieldC: no register gets the pixel position
-  PonerBE32(v, kShader + 20, kInterpoladores << 5);     // interpolatorInfo: the count
+  PonerBE32(v, kShader + 20, interpoladores << 5);      // interpolatorInfo: the count
   if (vertices) {
     PonerBE32(v, kShader + 24, 0);  // field18: no words before the elements
     PonerBE32(v, kShader + 28, 0);  // vertexElementCount
@@ -136,7 +139,7 @@ inline std::vector<uint8_t> ContenedorDeMicrocodigo(bool vertices, std::span<con
   }
   // VertexShader's interpolators follow field18 + elements (both 0) after field20; PixelShader's follow outputs.
   const size_t primero = vertices ? kShader + 36 : kShader + 32;
-  for (uint32_t k = 0; k < kInterpoladores; ++k) {
+  for (uint32_t k = 0; k < interpoladores; ++k) {
     PonerBE32(v, primero + k * 4, k | (kUsoTexcoord << 4) | (k << 8));
   }
   for (size_t i = 0; i < microcodigo.size(); ++i) {

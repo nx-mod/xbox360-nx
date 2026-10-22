@@ -12,13 +12,14 @@
  * Build with -DNFSMW_RECOMP -DHALO3_RECOMP -DXENOS_GLSL, as halo3_traductor.cpp is.
  *
  * Usage
- *   halo3_glsl_crudo <input folder> <output folder> <shader_common.glsl>
+ *   halo3_glsl_crudo <input folder> <output folder> <shader_common.glsl> [interpolators, 16 by default]
  */
 #include "XenosRecomp/shader_recompiler.h"
 #include "../src/halo3_traductor_nucleo.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -47,6 +48,7 @@ int main(int argc, char** argv) try {
     std::printf("no se puede leer %s\n", argv[3]);
     return 1;
   }
+  const uint32_t interpoladores = argc > 4 ? uint32_t(std::strtoul(argv[4], nullptr, 10)) : 16u;
   std::filesystem::create_directories(salida);
   std::vector<std::filesystem::path> archivos;
   for (const auto& e : std::filesystem::directory_iterator(entrada)) {
@@ -84,7 +86,7 @@ int main(int argc, char** argv) try {
     }
     try {
       uint32_t salidas = 0;
-      const std::string texto = halo3::nucleo::Traducir(vertices, microcodigo, preludio, salidas);
+      const std::string texto = halo3::nucleo::Traducir(vertices, microcodigo, preludio, salidas, interpoladores);
       std::ofstream f(salida / (nombre + (vertices ? ".vert.glsl" : ".frag.glsl")), std::ios::binary);
       f.write(texto.data(), std::streamsize(texto.size()));
       ++ok;

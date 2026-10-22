@@ -43,12 +43,14 @@ class ShadersHalo {
   void HabilitarTraductor();
   // Whether Identificar can answer at all: a library loaded or the translator enabled.
   bool activo() const;
-  // Microcode in host byte order, as the ring carries it. nullptr if neither the library has it nor the translator
-  // could translate it. Ring thread only.
+  // Microcode in host byte order, as the ring carries it. The library's entry, or nullptr (then Traducida). Ring
+  // thread only.
   const rex::x360::EntradaShader* Identificar(bool vertices, std::span<const uint32_t> microcodigo);
-  // The translator's version, library or not (nullptr if it cannot). A library shader and a translated one read
-  // their interpolators differently (by usage, by index), so a pair with one of each draws as two translations.
-  const rex::x360::EntradaShader* Traducida(bool vertices, std::span<const uint32_t> microcodigo);
+  // The translator's version, library or not (nullptr if it cannot), for a pair with `interpoladores` interpolators
+  // (SQ_PROGRAM_CNTL): translated once per microcode and count. A library shader and a translated one read their
+  // interpolators differently (by usage, by index), so a pair is drawn from the library only when both are in it.
+  const rex::x360::EntradaShader* Traducida(bool vertices, std::span<const uint32_t> microcodigo,
+                                            uint32_t interpoladores);
   static bool EsTraducida(const rex::x360::EntradaShader& e) { return !e.glsl.empty(); }
   EstadisticasShaders Estadisticas() const;
   size_t Cantidad() const;
