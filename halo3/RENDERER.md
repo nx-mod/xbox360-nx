@@ -115,3 +115,25 @@ no library, so a player needs no PC step).
 The XenonRecomp archive (`~/switch/halo3-nx-xenonrecomp`) rendered Halo on deko3d with a different design: a runtime
 microcode → GLSL translator (`H3Recomp/gpu/shader/translator.cpp`, 2,111 lines) laid out for SDL_GPU's binding
 model. Useful for semantics; its binding layout does not match the rex::x360 renderer, so it is not a drop-in.
+
+## Picture state (2026-10-22, end of day)
+
+Geometry drawing is behind `halo3_dibujar_geometria` (off on the console: with it on the game is too slow and the
+audio crackles). With it on:
+
+- **Draws reach the screen.** Fixed today: one host image per EDRAM base whatever the format (Halo draws a base as
+  8_8_8_8_GAMMA / 7e3 and resolves it as 8_8_8_8 / 2_10_10_10), OpenGL clip-space z remapped in the translated
+  vertex shaders (byte 492), resolves of two sizes at one address kept apart, CTX1 decoded, rectangle lists through a
+  geometry shader. The intro video (Bink, PS n329) and the menu background show.
+- **The picture washes white and never clears.** Measured: 27 copies a frame and **0 clears**: Halo never sets the
+  copy's clear bits, so its clears are D3D's own full-screen draws (translated n2147483649 / n2147483650). Whatever
+  it draws additively (blend 01010101) builds up. Next: log each clear draw's target and colour and check the
+  translated clear shaders. The 16-bit exposure chain (formats 5/7, resolves 26/32) as RGBA16F is in
+  `deko_destinos_flotantes` (off; it did not fix the white). Resolves to 16_16 and 16_16_FLOAT (25, 31) stay refused:
+  Halo copies an 800x800 target as 8_8_8_8 and as 16_16_FLOAT into the same memory every frame.
+- **Slow.** 60-130 ms of GPU a frame in the menu (~2,000 draws). Most is translated vertex shaders in the general
+  control-flow form (`switch (pc)` loop): 44 of the 66 such vertex shaders use loops, 20 backward jumps. Next:
+  structured loops in the translator.
+- **First runs compile.** Translated shaders compile in the background (`deko_compilar_solo_en_fondo`) and their
+  draws are skipped until ready; the DKSH cache on the SD makes later runs instant. Changing the translator's output
+  invalidates it.
