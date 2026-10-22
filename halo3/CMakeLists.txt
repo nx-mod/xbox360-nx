@@ -17,6 +17,7 @@ set(HALO3_SOURCES
     src/halo3_shaders.cpp
     src/halo3_traductor.cpp  # XenosRecomp's GLSL mode, built in (one file: its defines shape its classes)
     ${CMAKE_CURRENT_SOURCE_DIR}/../nfsmw_pal/src/nfsmw_shader_library.cpp  # the library file format
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nfsmw_pal/src/nfsmw_nativo_captura.cpp  # PNG captures for testing
     src/halo3_hooks.cpp
 )
 

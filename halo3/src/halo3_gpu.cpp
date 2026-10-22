@@ -53,6 +53,7 @@
 
 #include <rex/filesystem.h>
 #if HALO3_DEKO3D
+#include "../../nfsmw_pal/src/nfsmw_nativo_captura.h"  // PNG captures (nfsmw_captura_cada_s); to move into the SDK
 #include <rex/ui/deko3d/presentador.h>
 #include <rex/x360/deko/destinos.h>
 #include <rex/x360/decodificador.h>
@@ -218,6 +219,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   }
 
   void Shutdown() override {
+#if HALO3_DEKO3D
+    nfsmw::captura::Parar();
+#endif
     if (!active_.exchange(false)) {
       DestroyPresentation();
       return;
@@ -365,6 +369,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                      biblioteca.string().c_str());
       }
       shaders_.HabilitarTraductor();  // what the library does not have
+      nfsmw::captura::Arrancar([this]() { return presenter_.get(); });  // only with nfsmw_captura_cada_s set
     }
     return destinos_ != nullptr;
   }

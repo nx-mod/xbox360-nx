@@ -15,6 +15,12 @@
 #include <rex/rex_app.h>
 
 #include "halo3_gpu.h"
+
+#include <rex/cvar.h>
+
+#if REX_PLATFORM_SWITCH
+REXCVAR_DECLARE(std::string, switch_hilos_audio_juego);
+#endif
 #include <rex/filesystem/disc_image_extract.h>
 #include <rex/filesystem/first_launch.h>
 #include <rex/logging.h>
@@ -49,6 +55,11 @@ class Halo3App : public rex::ReXApp {
   // Left empty if none is found: the SDK then says what is missing. Runs before
   // the config file is read, as in nfsmw (see nfsmw_pal/src/nfsmw_app.h).
   void OnConfigurePaths(rex::PathConfig& paths) override {
+#if REX_PLATFORM_SWITCH
+    // Halo 3's audio thread, raised above the other game threads so the audio is fed in time (no static). Set before
+    // the config file is read, so halo3.toml can change it.
+    REXCVAR_SET(switch_hilos_audio_juego, std::string("AUDIO"));
+#endif
     if (!paths.game_data_root.empty()) {
       return;
     }
