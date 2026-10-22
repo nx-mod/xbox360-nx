@@ -61,6 +61,8 @@
 #endif
 
 namespace halo3::gpu {
+
+std::atomic<uint64_t> g_swaps{0};
 namespace {
 
 namespace xenos = rex::graphics::xenos;
@@ -592,6 +594,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         // frontbuffer (an empty swap left base=0 and the screen stayed black). Universal — in the SDK.
         ++swaps_;
         counter_.fetch_add(1, std::memory_order_relaxed);
+        g_swaps.fetch_add(1, std::memory_order_relaxed);
         // DIAG (why resueltas=0): to stderr so it survives a crash. Shows whether the game issues copy-mode
         // draws (resolves) at all, or draws without ever resolving. First swaps only.
         if (swaps_ <= 48 || (swaps_ % 300) == 0) {

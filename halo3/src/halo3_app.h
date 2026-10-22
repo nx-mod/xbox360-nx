@@ -13,6 +13,7 @@
 
 #include <rex/filesystem.h>
 #include <rex/rex_app.h>
+#include <rex/ui/overlay/debug_overlay.h>
 
 #include "halo3_gpu.h"
 
@@ -37,6 +38,11 @@ class Halo3App : public rex::ReXApp {
 
   // The graphics system is the game's own (halo3_gpu.cpp): the deko3d build has no Xenos emulation plugin,
   // and without a graphics system the game stops at its first frame, waiting for the GPU.
+  // The debug overlay's "Guest: N FPS (ms)", from the game's presents (as NFS's).
+  void OnPostSetup() override {
+    SetGuestFrameStats([] { return rex::ui::MuestrearFotogramas(halo3::gpu::g_swaps.load(std::memory_order_relaxed)); });
+  }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (!config.graphics) {
       config.graphics = halo3::gpu::CreateGraphicsSystem();
