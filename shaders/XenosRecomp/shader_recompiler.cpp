@@ -2236,6 +2236,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
      * general form, which is right for any control flow but which the GPU compilers handle badly (Halo 3's
      * vertex shaders with it reached 155 registers).
      */
+#ifdef XENOS_GLSL
+    if (!buclesConSaltosEstructurados && hayBucle && haySalto)
+        simpleControlFlow = false;
+#endif
     if (simpleControlFlow && (!saltosIncondicionales.empty() || (hayBucle && haySalto)))
     {
         std::vector<std::pair<uint32_t, uint32_t>> elses;

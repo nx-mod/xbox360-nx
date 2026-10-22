@@ -32,7 +32,8 @@ inline uint32_t SalidasEscritas(std::string_view cuerpo) {
 // it never writes would leave its render target undefined instead of untouched. `salidas` gets those (0 for a vertex
 // shader). `interpoladores`: the pair's count (SQ_PROGRAM_CNTL), the same for both stages.
 inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo, std::string_view preludio,
-                            uint32_t& salidas, uint32_t interpoladores = contenedor::kInterpoladores) {
+                            uint32_t& salidas, uint32_t interpoladores = contenedor::kInterpoladores,
+                            bool bucles_estructurados = true) {
   salidas = vertices ? 0u : uint32_t(PIXEL_SHADER_OUTPUT_COLOR0 | PIXEL_SHADER_OUTPUT_COLOR1 |
                                      PIXEL_SHADER_OUTPUT_COLOR2 | PIXEL_SHADER_OUTPUT_COLOR3 |
                                      PIXEL_SHADER_OUTPUT_DEPTH);
@@ -42,6 +43,7 @@ inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo
     const std::vector<uint8_t> c = contenedor::ContenedorDeMicrocodigo(vertices, microcodigo, salidas, interpoladores);
     ShaderRecompiler traductor;
     traductor.soloInterpoladoresDelContenedor = true;  // only the pair's interpolators, not all 25
+    traductor.buclesConSaltosEstructurados = bucles_estructurados;
     traductor.recompile(c.data(), preludio);
     texto = std::move(traductor.out);
     if (vertices) break;

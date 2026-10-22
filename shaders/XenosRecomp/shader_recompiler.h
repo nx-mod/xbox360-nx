@@ -17,6 +17,8 @@ struct StringBuffer
     // all of INTERPOLATORS: the run-time translator gives each pair its exact count, and every declared output is
     // computed and carried per vertex (25 of them made Halo 3's vertex shaders 155 registers wide).
     bool soloInterpoladoresDelContenedor = false;
+    // Loops with jumps in the structured form (brace simulation); false = a loop with any jump takes the general form.
+    bool buclesConSaltosEstructurados = true;
     std::vector<bool> interpoladoresDeclarados;  // set while translating, for the outputs' initial values
 #endif
 
