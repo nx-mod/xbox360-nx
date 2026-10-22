@@ -1128,6 +1128,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
       if (indice < 0x4800) {  // VS and PS constants (native draws)
         if (registros_[indice] != valor) {
           ++(indice < 0x4400 ? generacion_constantes_vs_ : generacion_constantes_ps_);
+          MarcarConstantes(indice, indice + 1);
         } else {
           ++constantes_sin_cambio_;
         }
@@ -1259,6 +1260,9 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
     }
     if (cambio_ps) {
       ++generacion_constantes_ps_;
+    }
+    if (cambio_vs || cambio_ps) {
+      MarcarConstantes(indice, indice + cuenta);
     }
     if (cambio_fetch) {
       ++generacion_fetch_;
@@ -1525,6 +1529,9 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
     }
     if (ps) {
       ++generacion_constantes_ps_;
+    }
+    if (vs || ps) {
+      MarcarConstantes(indice, indice + cuenta);
     }
     if (fetch) {
       ++generacion_fetch_;
@@ -2322,6 +2329,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
     peticion.generacion_vs = generacion_vs_;
     peticion.generacion_constantes_vs = generacion_constantes_vs_;
     peticion.generacion_constantes_ps = generacion_constantes_ps_;
+    peticion.sucio_constantes = sucio_constantes_;
     peticion.generacion_fetch = generacion_fetch_;
     peticion.generacion_encuadre = generacion_encuadre_;
     peticion.vegetacion_juego = vegetacion_juego_;  // nfsmw_d3d_vegetacion_juego
@@ -3175,7 +3183,16 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
                     "({} pendientes{})",
                     tipo, cuenta, pendientes_.size(), primero);
       }
+      // Each new kind (primitive type, count) of draw without a record once, to stderr (it survives closing the
+      // game): a draw the game makes through a routine with no Draw* hook shows up here at the moment it appears.
       UsarIdentidadDelAnillo();
+      if (tipos_sin_registro_.size() < 64 &&
+          tipos_sin_registro_.insert((uint64_t(tipo) << 32) | cuenta).second) {
+        std::fprintf(stderr, "[sin registro] swap %llu: tipo %u cuenta %u (%zu pendientes), se dibuja con VS n%d PS n%d\n",
+                     static_cast<unsigned long long>(swaps_.load(std::memory_order_relaxed)), tipo, cuenta,
+                     pendientes_.size(), vs_dibujo_ ? int(vs_dibujo_->numero) : -1,
+                     ps_dibujo_ ? int(ps_dibujo_->numero) : -1);
+      }
       return;
     }
     registros_saltados_ += encontrado;
@@ -4392,6 +4409,7 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
   rex::system::object_ref<rex::system::XHostThread> hilo_anillo_;
 
   std::atomic<uint64_t> swaps_{0};
+  std::unordered_set<uint64_t> tipos_sin_registro_;  // kinds of draw without a record already reported
   std::atomic<uint64_t> vblanks_{0};
   std::atomic<uint64_t> paquetes_{0};
   std::atomic<uint64_t> interrupciones_{0};
@@ -4529,6 +4547,22 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
   uint64_t generacion_constantes_vs_ = 0;
   int registros_en_bloque_ = -1;  // -1 = cvar not read yet
   uint64_t generacion_constantes_ps_ = 0;
+  // The constant registers written with a new value since the renderer last read them (PeticionDibujo::
+  // sucio_constantes): 16-byte registers [desde, hasta) of the VS block (0, 1) and of the PS block (2, 3), empty while
+  // desde >= hasta. Bumped together with the generations above; the renderer empties it when it has compared it.
+  uint32_t sucio_constantes_[4] = {256, 0, 256, 0};
+  void MarcarConstantes(uint32_t primero, uint32_t fin) {  // register indices [primero, fin)
+    auto marcar = [&](uint32_t base, uint32_t* s) {
+      const uint32_t a = std::max(primero, base);
+      const uint32_t b = std::min(fin, base + 0x400);
+      if (a < b) {
+        s[0] = std::min(s[0], (a - base) >> 2);
+        s[1] = std::max(s[1], (b - base + 3) >> 2);
+      }
+    };
+    marcar(0x4000, sucio_constantes_);
+    marcar(0x4400, sucio_constantes_ + 2);
+  }
   // Generations of the fetch constants and the viewport state (viewport, scissor, clip). They
   // travel in PeticionDibujo so the translator does not redo per draw what has not changed.
   uint64_t generacion_fetch_ = 0;

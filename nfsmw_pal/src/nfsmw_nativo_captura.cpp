@@ -10,6 +10,7 @@
 #include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/ui/presenter.h>
+#include <rex/x360/render_hooks.h>
 
 #include <algorithm>
 #include <array>
@@ -142,6 +143,8 @@ void Bucle(std::function<rex::ui::Presenter*()> obtener_presentador, int cada_s,
       REXLOG_WARN("[captura] {}: no hay imagen del juego que capturar", n);
       continue;
     }
+    // The renderer lists the next frame's last draws under this number (stderr).
+    rex::x360::g_volcar_dibujos_captura.store(n, std::memory_order_relaxed);
     std::error_code ec;
     std::filesystem::create_directories(carpeta, ec);
     const auto segundos = std::chrono::duration_cast<std::chrono::seconds>(

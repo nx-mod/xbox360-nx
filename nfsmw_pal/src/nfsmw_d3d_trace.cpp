@@ -60,6 +60,20 @@ REXCVAR_DEFINE_BOOL(nfsmw_nativo_gotas_lluvia, true, "NFSMW",
                     "VisualTreatment). Sin esto las gotas no salen. false = como antes")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+/*
+ * The game's present interval ([device+13772], read by D3D's SyncToPresentationInterval, which puts in the ring a
+ * wait for that many vblanks since the previous swap): 0x80000000 immediate, 1 (60 FPS at most), 2 (30 at most).
+ * The game asks for 2 almost everywhere, as on the Xbox 360, so a menu frame of 20 ms still shows at 33.3. "juego"
+ * leaves it as it is; "1" lowers 2-4 to 1; "inmediato" waits for no vblank. Only for the call (the game's value is put
+ * back after it). Each value the game sets is logged ("[presentacion]").
+ */
+REXCVAR_DEFINE_STRING(nfsmw_intervalo_presentacion, "juego", "Graficos",
+                      "Intervalo de presentacion del juego: juego (el suyo: 30 FPS como mucho casi siempre), 1 (60 FPS "
+                      "como mucho) o inmediato (sin esperar al vblank). Prueba: los videos y el ritmo del juego pueden "
+                      "depender de los 30")
+    .allowed({"juego", "1", "inmediato"})
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_BOOL(nfsmw_d3d_trace, false, "NFSMW",
                     "Registrar las llamadas al Direct3D del juego en rex_d3d.log")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
@@ -553,6 +567,48 @@ void CaptureDevice(const uint8_t* base) {
 }  // namespace
 }  // namespace nfsmw::d3d_trace
 
+// nfsmw_intervalo_presentacion: the interval for this call of SyncToPresentationInterval (r3 = device). Returns the
+// game's value to put back, or 0 when nothing was changed.
+namespace nfsmw::d3d_trace {
+namespace {
+constexpr uint32_t kIntervaloInmediato = 0x80000000u;
+constexpr uint32_t kOffsetIntervalo = 13772;
+uint32_t AntesDelIntervalo(uint32_t dispositivo, uint8_t* base) {
+  static const std::string modo = REXCVAR_GET(nfsmw_intervalo_presentacion);
+  static uint32_t visto = 0xFFFFFFFFu;
+  static int avisos = 0;
+  if (!dispositivo) {
+    return 0;
+  }
+  const uint32_t juego = LoadGuestU32(base, dispositivo + kOffsetIntervalo);
+  if (juego != visto && avisos < 64) {
+    visto = juego;
+    ++avisos;
+    REXLOG_INFO("[presentacion] el juego pide el intervalo {:08X} ({})", juego,
+                modo == "juego" ? "se respeta" : modo == "1" ? "se usa 1" : "se usa inmediato");
+  }
+  uint32_t nuevo = juego;
+  if (modo == "1" && juego >= 2 && juego <= 4) {
+    nuevo = 1;
+  } else if (modo == "inmediato" && juego != kIntervaloInmediato) {
+    nuevo = kIntervaloInmediato;
+  }
+  if (nuevo == juego) {
+    return 0;
+  }
+  const uint32_t guardado = __builtin_bswap32(nuevo);
+  std::memcpy(base + dispositivo + kOffsetIntervalo, &guardado, sizeof(guardado));
+  return juego;
+}
+void DespuesDelIntervalo(uint32_t dispositivo, uint8_t* base, uint32_t juego) {
+  if (dispositivo && juego) {
+    const uint32_t guardado = __builtin_bswap32(juego);
+    std::memcpy(base + dispositivo + kOffsetIntervalo, &guardado, sizeof(guardado));
+  }
+}
+}  // namespace
+}  // namespace nfsmw::d3d_trace
+
 // ---------------------------------------------------------------------------
 //  The hooks. One per function: enter, call the original, exit.
 // ---------------------------------------------------------------------------
@@ -566,7 +622,12 @@ void CaptureDevice(const uint8_t* base) {
       Enter(id, ctx);                                                  \
     }                                                                  \
     NotificarVideo(id, ctx, base);                                     \
+    const uint32_t intervalo_disp =                                    \
+        id == kSyncPresentInterval ? ctx.r3.u32 : 0u;                  \
+    const uint32_t intervalo_juego =                                   \
+        AntesDelIntervalo(intervalo_disp, base);                       \
     __imp__sub_##addr(ctx, base);                                      \
+    DespuesDelIntervalo(intervalo_disp, base, intervalo_juego);        \
     if (on) {                                                          \
       Leave(id, ctx);                                                  \
     }                                                                  \
