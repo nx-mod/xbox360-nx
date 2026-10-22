@@ -25,6 +25,8 @@ the concrete record of one port.
 | 11 | Same crash ~20 s into the menu, pointer `0x4B1E6BA0` | Not the barrier or fork fixes | Diagnostic hook on the object lookup |
 | 12 | First run with the deko3d presenter: froze before the game folder mount (log ends at "Too few processor cores", no crash report). Rerun: menu as in boot 10, same crash, `lvx128` from `0x4B1DA500` | The object lookup was fine (the hook never fired). The bad pointer is the node loop's orientation pointer, `r4 = r22 + 32 * node` for node `1 .. [r21 + 48]`: the loop walks past the object's node data | Diagnostic hook at both calls of the loop, see [How each crash was read](#how-each-crash-was-read) |
 | 13 | Menu, then the same call: a store to `r5 = r17 + 52 * node`, `r5` = `0x1_4B1E_2890` | Both loop pointers are bad on different runs. `r17` holds a 64-bit value that `add r17,r10,r29` (object + 16-bit offset) cannot produce, so something in `sub_8231D8D0` replaces it after it is set. The `[nodos]` lines of this run were false alarms: `QueryProtect` does not report the executable's image readable | `r17` kept after the add (0x8231D940) and compared after each of the function's 16 calls |
+| 14 | Same class of crash, victim function changing per run (`sub_824579C8`, `sub_8243B850`, ...) | Not one bad function: memory corruption from a **read-fault storm**. `rex_perfil.log`: fps 25→1, `lectura emulada` ~113,000/s, watchdog `desmapeo (cada lectura falla)` | [The read-fault storm](#13-the-read-fault-storm-the-breakthrough) |
+| 15 | **No storm crash.** `lectura emulada` = 0 all run, steady 24-30 fps. Reaches the main menu, navigable with click sounds, into a game's intro | — (the storm fix) | Picture: geometry draws are never sent to the deko renderer, and the one resolve per frame is rejected (`c110`, 2_10_10_10 target); a separate deep crash on starting a match |
 
 ## 1. The game folder
 
@@ -191,11 +193,41 @@ missed indirect entries (`3f9c6faf`) and CRT `setjmp`/`longjmp` (`69053f09`), sh
 ## 12. First launch from a disc image
 
 The Switch cannot run from the `.iso`: the SDK's disc reader maps the whole image, and 7 GB does not fit. So, as
-haloce-nx does, the first start copies the disc into `game/` beside the NRO (`src/halo3_first_launch.cpp`, on top
-of `rex::filesystem::ExtractDiscImage` in `sdk/`, which reads the image in pieces). It can be interrupted and carries
+haloce-nx does, the first start copies the disc into `game/` beside the NRO. That flow now lives in the SDK,
+`rex/filesystem/first_launch.h` (on top of `rex::filesystem::ExtractDiscImage`, which reads the image in pieces), so NFS
+and every other title use the same copy: Halo calls it with folder `game`, NFS with `game_root`. It can be interrupted and carries
 on at the next start (`game/.extracting`), leaves `$SystemUpdate` out, and never deletes the `.iso`. Progress is on
 libnx's text console for now; once the presenter is in, it moves to the ImGui overlay (`OnFinalizePaths`), the
 nearest thing to haloce-nx's in-game text.
+
+## 13. The read-fault storm (the breakthrough)
+
+Boots 8-13 all crashed in `sub_8231D8D0` with a bad pointer that changed from run to run. A changing victim is the
+signature of memory corruption, not one bad function — and `rex_perfil.log` showed the real cause: FPS collapsing
+from ~25 to ~1 while **`lectura emulada`** (emulated guest reads) climbed to **~113,000/s**, three cores pinned, and
+the watchdog reporting **`desmapeo (cada lectura falla)`** — "unmapping, every read fails".
+
+Why: the Switch has no cheap read-only pages. The SDK's guest window protects a read-only page by *unmapping* it
+(`svcSetProcessMemoryPermission` is refused on the aliased views, so `guest_memory_switch.cpp` falls back to
+unmapping). Afterwards every guest read of that page faults and is emulated through the shadow (~9 µs each). Two
+things mark pages read-only and are then read constantly by the native recompiled code:
+- **XEX load** — `xex_module.cpp` protects `CODE` and `READONLY_DATA` sections read-only; Halo's constant tables
+  live there.
+- **At run time** — the game's own `NtProtectVirtualMemory` / `MmSetAddressProtect` calls (this one only kicks in
+  at the menu, which is why an XEX-only fix left a second storm).
+
+NFS barely hits this; Halo's large read-only data hammers it, so the reads starve audio (static), stall the load
+(feels like an endless boot), and corrupt a pointer mid-update (the crash).
+
+**The fix** (one chokepoint, `RexGmProtect` in `sdk/src/core/guest_memory_switch.cpp`): on the Switch, promote any
+read-only request to read-write so the page stays mapped; leave no-access (`REX_GM_NONE`: zero/guard/released
+pages) unmapped as before. Nothing needs read-only protection here — the recompiled code is native AArch64 (it never
+executes the guest code pages), the deko renderer tracks GPU coherence by **hashing** (`x360/deko/texturas.cpp`),
+and these titles use no write-watch. This is "unprotected guest memory + hashing", the same model haloce-nx
+(`port/switch/host/host_memory.c`) and the archive use.
+
+Result: `lectura emulada` = 0 for the whole run, a steady 24-30 fps, and the game is **menu-navigable** (boot 15) —
+boot, main menu (heard, not seen), input with click sounds, and into a game's intro.
 
 ## How each crash was read
 
@@ -220,7 +252,20 @@ nearest thing to haloce-nx's in-game text.
 
 ## Still open
 
-- Nothing is drawn: the deko3d renderer, and Halo's shaders (they come from the map files, not the executable).
+- **Picture.** Nothing is drawn yet. `halo3_gpu.cpp` sends only copy-mode draws (resolves/clears) to the deko
+  renderer; geometry draws are counted and dropped — there is no `PeticionDibujo` path (shader `IM_LOAD` tracking,
+  translated VS/PS, constant/fetch generations) like NFS's `nfsmw_nativo_sistema.cpp` `DibujarNativo`. The ~1
+  resolve per frame that does arrive is rejected (`c110`): Halo renders into color format 10,
+  `k_2_10_10_10_AS_10_10_10_10`, and both the resolve gate (`destinos.cpp` `Copiar`) and the draw gate
+  (`dibujos.cpp`) accept only 8_8_8_8. So `Presentar` finds no resolved texture at the swap base (`04E20000`) and the
+  screen stays white/black (the ImGui overlay presents fine). Next: move NFS's ring→draw machinery into the SDK and
+  feed halo3's draws through it; support 2_10_10_10 targets. (The Bungie-splash `frame_NNN.png` and `H3_*` logs
+  found in `sdmc:/halo3-nx/` were written by the XenonRecomp archive build, not this one.)
+- **Audio static** early in the load (not the storm, not clipping: `muestras saturadas` = 0). Sparse/incomplete feed
+  while loading; suspect per-voice resampling to 48 kHz. Needs a PCM dump to pin down.
+- **Deep crash** when actually starting a match (a new, much-later fault than the storm crashes).
+- **Load time**: long. Lead from the sibling ports: compile shaders / offload work off the game thread in the
+  background.
 - `cache0:` / `cache1:` (the 360's cache partition) are left unmounted, as upstream does; the game reads from the
   disc instead.
 - `XeKeysConsolePrivateKeySign` returns 0 (failure, as a BOOL); Halo 3 has not been seen calling it.

@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -176,6 +177,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       return X_STATUS_SUCCESS;
     }
     last_report_ = Clock::now();
+    if (kRegD1ModeVblankVlineStatus < registers_.size()) {
+      registers_[kRegD1ModeVblankVlineStatus] = 1;  // a vblank pending at start, as the reference port does
+    }
     vblank_thread_ = rex::system::object_ref<rex::system::XHostThread>(new rex::system::XHostThread(
         kernel_state_, 128 * 1024, 0, [this]() { return VblankLoop(); }));
     vblank_thread_->set_name("GPU vblank");
@@ -269,8 +273,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         rex::kernel::xboxkrnl::VdQueryVideoMode(&mode);
         return std::min(uint32_t(mode.display_height), uint32_t(0x0FFF));
       }
-      case kRegD1ModeVblankVlineStatus:
-        return 1;  // in vblank
+      // kRegD1ModeVblankVlineStatus (0x1951) reads from the mirror: it is set to 1 only transiently on each
+      // vblank (see Interrupt) and cleared by the game. A constant 1 made the game wait forever for the vblank
+      // to end -> the frame loop stalled and nothing presented. (Ref: halo3-nx-xenonrecomp e4c835ef.)
       case kRegD1ModeViewportSize: {
         rex::system::X_VIDEO_MODE mode;
         rex::kernel::xboxkrnl::VdQueryVideoMode(&mode);
@@ -364,6 +369,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
       return;
     }
     thread->SetActiveCpu(uint8_t(cpu));
+    // The game's graphics interrupt callback ignores a vblank unless the vblank status register says one is
+    // pending (source 0 = vblank). Set it here; the callback reads and clears it.
+    if (source == 0 && kRegD1ModeVblankVlineStatus < registers_.size()) {
+      registers_[kRegD1ModeVblankVlineStatus] |= 1;
+    }
     uint64_t args[] = {source, callback_data_.load(std::memory_order_acquire)};
     dispatcher_->ExecuteInterrupt(thread->thread_state(), callback, args, 2);
   }
@@ -522,12 +532,20 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         break;
       }
       case xenos::PM4_XE_SWAP:
-        // VdSwap writes "SWAP", the frontbuffer's physical address and its size. The renderer presents whatever is
-        // resolved (clears and, once the ring decoder feeds draws, the frame). Handheld 1280x720.
+        // VdSwap writes the frontbuffer descriptor into fetch constant 0 just before this packet;
+        // rex::x360::LeerTexturaSwap reads it from the register mirror so the renderer finds the resolved
+        // frontbuffer (an empty swap left base=0 and the screen stayed black). Universal — in the SDK.
         ++swaps_;
         counter_.fetch_add(1, std::memory_order_relaxed);
+        // DIAG (why resueltas=0): to stderr so it survives a crash. Shows whether the game issues copy-mode
+        // draws (resolves) at all, or draws without ever resolving. First swaps only.
+        if (swaps_ <= 48) {
+          std::fprintf(stderr, "[gpu] swap#%llu draws=%llu copias=%llu packets=%llu\n",
+                       (unsigned long long)swaps_, (unsigned long long)draws_, (unsigned long long)copias_,
+                       (unsigned long long)packets_);
+        }
         if (EnsureRenderer()) {
-          destinos_->Presentar(presenter_.get(), rex::x360::TexturaSwap{}, 1280, 720);
+          destinos_->Presentar(presenter_.get(), rex::x360::LeerTexturaSwap(registers_.data()), 1280, 720);
         }
         break;
       case xenos::PM4_INDIRECT_BUFFER:
@@ -736,6 +754,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         // resolved to its target (the first thing that can appear on screen). Geometry draws still only count
         // until the ring decoder builds PeticionDibujo for them.
         if (EnsureRenderer() && rex::x360::EsCopia(registers_.data())) {
+          ++copias_;  // DIAG: copy-mode draws (resolves) seen
           destinos_->Copiar(rex::x360::LeerRegistrosCopia(registers_.data()));
         }
         break;
@@ -791,7 +810,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   rex::system::object_ref<rex::system::XHostThread> vblank_thread_;
 
   // Only the ring thread touches these.
-  uint64_t swaps_ = 0, draws_ = 0, packets_ = 0, waits_cut_short_ = 0;
+  uint64_t swaps_ = 0, draws_ = 0, packets_ = 0, waits_cut_short_ = 0, copias_ = 0;
   uint64_t reported_swaps_ = 0, reported_draws_ = 0, reported_packets_ = 0;
   Clock::time_point last_report_;
 };
