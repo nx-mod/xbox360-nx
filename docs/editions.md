@@ -108,6 +108,22 @@ Before shipping an edition build, run the same checks as for the reference (see 
 `_start` at address 0, the texture key check (`tools/comprobar_clave_textura.py`), and the same number of installed
 hooks as the reference.
 
+### Running it on Linux (the dev phone)
+
+The whole pipeline runs with plain Python; on Linux use `python3` where the commands say `py`. Work in `out/editions/<edition>/`
+(ignored by git). Three things the usage lines do not say:
+
+- `test/save_image.mjs` of the installer (Node) saves both images from the ISOs.
+- `verificar_ganchos.py` takes a fifth argument: the hooked addresses, one hex address per line. They are every
+  `82xxxxxx` address in the reference sources, the same set `llamadas_directas.py` respects:
+  `python3 -c "import sys; sys.path.insert(0,'tools'); import llamadas_directas as l; print('\n'.join(n[4:] for n in sorted(l.enganchadas('nfsmw_pal'))))" > enganchadas_pal.txt`.
+  For the USA edition it reports 389 of 1970 hooked functions with differences: 338 are jump tables that moved with
+  their function (every entry shifted by the function's own offset), and the rest are `.rdata` references
+  `crear_arbol.py` translates, plus the three functions the USA rewrote, which `usa/parejas_corregidas.json`
+  handles.
+- `crear_arbol.py` writes the tree as `app_<edition>/` (upstream's name). Rename it to `nfsmw_<edition>/`, which is
+  what `tools/codegen.sh` and `.gitignore` expect.
+
 ## Installer manifest
 
 The installer page reads `release/manifest.json`, in the

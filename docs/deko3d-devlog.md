@@ -29,6 +29,7 @@ game output). On the console they come from `sdmc:/switch/nfsmw-nx/logs/`, `capt
 | 2026-10-10 | Run 10 | A race (2-channel music, like run 9), the repeat test in the GPU profile | 27-37 fps, GPU-bound (26-36 ms per frame). The downsample n77 costs 3.6 ms the second time too: its own cost, ~20x slower per texture read than the full-screen n19. The mix dump ended before the race; the hooked decoder never ran. The texture-check sampling switched itself off again (one texture) |
 | 2026-10-10 | Run 11 | `nfsmw_resolucion_interna = escena_960x540` (the game draws at 960x540 and the frame is scaled to the screen), per-draw profile with variants | 33-55 fps at the 960x540 scene, GPU 20-29 ms per frame (27-37 fps and 26-36 ms at 1280x720). Bloom, shadows and reflections came out shifted to the left: resolved textures were created at the copy destination's pitch (256 for a 240-wide image). The bloom downscale (3.6 ms at 1280x720) is 1.74 ms; its cost is in the reads of the resolved texture, not in the arithmetic or the filter |
 | 2026-10-10 | Run 12 | The width fix, 11 minutes of racing at 960x540 (log `out/consola/p2c6/nfsmw_019.log`) | Fixed: the bloom textures are 240x134 and 120x67, and the user reports the image right. **35.2 fps on average over 59 race windows (28.0-47.7)**, 2,187 draws per frame, GPU 24.6 ms per frame, no crash. The GPU now waits 5.3 ms per frame for the ring thread: the frame is balanced between the two |
+| 2026-10-22 | USA runs 2-4 | The USA edition on this repository's build: the intro chase, a CPU profile, the cracked-glass hunt | 26-28 fps at 2,900-3,550 draws per frame; the ring thread is the limit again (974 ms/s busy, 9.9 us per draw, GPU idle 12-13 ms per frame). Hot spots: XXH3 per 64-byte line in the geometry store, the constant differences, the packet parser. XXH3 inlined and a dirty range for the constants (not yet run) |
 
 ## The goal
 
@@ -864,6 +865,62 @@ now) falls in the "320" bucket and the bloom's 240-wide passes in "menores"; the
   compile.
 - Release and debug NROs of the final code are on the console (`nfsmw-dk.nro` 39,856,325 bytes,
   `nfsmw-dk-depurar.nro` 39,884,997).
+
+
+## 2026-10-22: the USA edition, the ring thread again, the cracked glass
+
+Logs: the console's `/switch/nfsmw-nx-usa/logs/` (`nfsmw_004.log` to `nfsmw_006.log`, `rex/rex_perfil.log` with
+stack sampling, `rex/rex_stderr.log`), ELFs kept in `out/consola/usa_diag_*` and `out/consola/usa_perf1`. The USA
+edition (`nfsmw_usa/`), handheld, stock clocks (CPU 1020 MHz, GPU 460.8 MHz), the career's intro chase.
+
+**Performance.** 26-28 fps at 2,860-3,550 draws per frame in the chase, with stretches of 15-20 fps (in one 20 s
+window 123 frames of 36-50 ms, 61 of 50-60 ms and 28 over 60 ms). The ring thread is busy 974 ms of every second at
+9.9 us per draw (7.6 in `RenderDk`: preparing 1.26, textures 0.98, state 1.21, vertices 2.06, constants and draw
+2.08), and the GPU, 24.7 ms of work per frame, waits 12-13 ms per frame for it. More draws, slower frames: the dips
+are the ring thread.
+
+**The CPU profile** (`rex_perfil.log`, a 10 s race window, ring thread samples by caller; for a function that calls
+others the sampled return address is its last call, so read those rows as "in that function"):
+
+| Where | Share |
+|---|---|
+| `XXH3_64bits` from `AlmacenGeometria::HuellaFase` (and `Huellas`) | ~13 % |
+| `Paquete` and below it (`PaqueteTipo3`, `ProcesarMarcador`) | ~12.6 % |
+| `EmpujarDiferencias`, its compare loop | ~9 % |
+| `AlmacenGeometria::Consultar` | ~6 % |
+
+### Changes after the USA runs (built, not yet run on the console)
+
+- **XXH3 inlined** in `geometria.cpp`, `dibujos.cpp` and `texturas.cpp` (`XXH_INLINE_ALL`, same algorithm and values).
+  The geometry store hashes ranges in 64-byte lines with one call per line; full lines now pass the constant length
+  64, so the compiler emits the fixed 17-128 byte path with no call and no size dispatch. The per-draw keys (vertex
+  input, pipeline state cache, texture key) hash a few dozen bytes each, where the call cost more than the hash.
+- **A dirty range for the constants.** The game writes a few constants before almost every draw; any write changed
+  the generation and `EmpujarDiferencias` compared everything the shader reads again (up to 4 KB for a VS). The sink
+  (`nfsmw_nativo_sistema.cpp`) now keeps the 16-byte registers written with a new value since the renderer last read
+  them (`PeticionDibujo::sucio_constantes`, VS and PS, `MarcarConstantes` next to every generation bump), and the
+  renderer compares only that part of what it has already pushed, then empties it. Writes the renderer has not read
+  (a skipped draw, the deferred sky) stay in the range, so nothing is lost; without the pointer the old behaviour
+  stays. Parser and renderer are on the same thread.
+- **The downsample, still open.** In this library it is `n65` (USA numbering): 2.44 ms, 0.13 ms with the empty 1x1
+  textures, so 95 % is its 16 texture reads per pixel. The full-screen `n8` reads as many texels of the same 1280x720
+  texture in 0.25 ms. Same reads, ten times the time: the spread taps miss the texture cache. Next: tile layout
+  experiments, or the same average in two cheaper steps.
+
+**The cracked glass** (near the end of the career's intro, a police car hits the camera): the screen goes dark
+instead of showing the cracked glass. Captures (`nfsmw_captura_cada_s = 1`) show the scene under a uniform veil at
+about 10 % brightness with no crack pattern at all (a high-pass of the frame shows only the scene): the darkening is
+probably the game's own fade, and the glass is what is missing. Ruled out so far: rejected draws (0), unsupported
+texture formats (no warning), empty textures in any draw, the blend factor mapping, BC1 alpha, and `n101`/the
+1024x512 DXT3 textures that appear at that moment (decoded from the console's memory: tree billboards). Nobody has
+reported it fixed upstream, in the forks or in Xenia's compatibility threads (closest: upstream issue #21, a black
+HUD with no log). Diagnostics added for it, all off by default:
+
+- `nfsmw_dk_diag_combinaciones`: one stderr line per new combination of shaders, blend state and textures.
+- `nfsmw_dk_diag_ps = n`: dumps 1 MB of guest memory of that pixel shader's large textures to `logs/rex/` each time
+  it changes, with the draw's alpha test and constants c0-c3 (hashes 1 MB per draw: slow).
+- With `nfsmw_captura_cada_s`, each capture also lists the next frame's last 300 draws on stderr
+  (`[dibujos de la captura N]`): the capture that shows the dark frame comes with the draws that made it.
 
 ## Open work
 

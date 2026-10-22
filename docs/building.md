@@ -170,9 +170,13 @@ The NRO expects this layout, the same one the installer page makes:
 sdmc:/switch/nfsmw-nx/
     nfsmw-nx.nro
     nfsmw.toml
-    nfsmw_shaders.nfsp
+    nfsmw_shaders.nfsp      (nfsmw_shaders_dk.nfsp for the deko3d build)
     game_root/          the files of the disc
 ```
+
+Instead of `game_root/`, the disc's `.iso` can go in the folder: the first start copies it into `game_root/` with its
+progress on screen (the Switch cannot read a 7 GB image in place), and every start after that uses the copy. An
+interrupted copy carries on at the next start. The `.iso` is never deleted; remove it yourself once the copy is done.
 
 `nfsmw.toml` has the settings read at startup ([cvars](glossary.md#cvar)). The one the installer page gives players is
 `release/nfsmw.toml` in the [installer's repository](https://github.com/StevensND/nfsmw-nx-installer).

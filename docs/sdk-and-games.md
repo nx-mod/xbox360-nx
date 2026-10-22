@@ -24,6 +24,6 @@ and the game keeps a thin layer (a hook table or config) on top.
 
 ## Still game-side (by design)
 
-Halo 3: `halo3_gpu.cpp` (its deko3d graphics system — ring reader, interrupts, presenter) and
-`halo3_first_launch.cpp`. NFS: sound-engine hooks, native function replacements, race trims,
+Halo 3: `halo3_gpu.cpp` (its deko3d graphics system — ring reader, interrupts, presenter). The first-launch
+`.iso` copy moved into the SDK (`rex/filesystem/first_launch.h`); Halo and NFS both use it. NFS: sound-engine hooks, native function replacements, race trims,
 F4 settings, D3D wait and cutscene hooks. Controls and audio output are already shared in the SDK.

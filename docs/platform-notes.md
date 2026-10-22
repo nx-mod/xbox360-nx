@@ -88,6 +88,15 @@ runtime recreates inside the Switch process. The Switch version of that code is 
 - **The permissions of guest pages cannot be changed.** `svcSetProcessMemoryPermission` is refused on memory mapped
   with `svcMapProcessMemory`. So to watch guest pages for writes (to notice when the game changes them), the runtime
   has to unmap them instead.
+- **Read-only pages are the trap.** Because a read-only page is unmapped, *every* guest read of it also faults and is
+  emulated through the shadow (~9 µs each). A title that marks a large region read-only and then reads it hard —
+  Halo 3's XEX `CODE`/`READONLY_DATA` constant tables, or pages the game protects at run time with
+  `NtProtectVirtualMemory` — can fault ~113,000×/s, pinning several cores and starving everything else
+  (`rex_perfil.log`: `lectura emulada`, watchdog `desmapeo (cada lectura falla)`). So on the Switch `RexGmProtect`
+  keeps any read-only request **read-write** (only no-access stays unmapped): the recompiled code is native and
+  never executes the guest code pages, and GPU coherence is tracked by hashing (`x360/deko/texturas.cpp`), not by
+  write faults — the same "unprotected memory + hashing" model haloce-nx and the XenonRecomp archive use. Write-watch
+  (the Xenia `SharedMemory` path) is not used on the deko renderer, so nothing depends on these faults.
 
 ## Exceptions
 

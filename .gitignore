@@ -38,3 +38,9 @@ __pycache__/
 *.pyc
 .vs/
 .vscode/
+# Edition trees made by tools/editions/crear_arbol.py (generated, as upstream app_*/)
+app_*/
+nfsmw_usa/
+nfsmw_jpn/
+nfsmw_rus/
+nfsmw_pal_*/

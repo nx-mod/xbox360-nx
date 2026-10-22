@@ -4,6 +4,8 @@ Xbox 360 games running natively on the Nintendo Switch. It's not an emulator: ea
 statically recompiled to C++ with [ReXGlue](https://github.com/rexglue/rexglue-sdk) and built for the Switch, and
 frames are drawn by a native renderer.
 
+![Need for Speed: Most Wanted on the Switch, title screen at 60 FPS](docs/images/nfsmw-title.jpg)
+
 > [!NOTE]
 > You need your own copy of each game. This repository contains no game data or game code.
 
@@ -11,11 +13,49 @@ frames are drawn by a native renderer.
 
 | Game | Folder | Status |
 | --- | --- | --- |
-| Need for Speed: Most Wanted (2005) | [`nfsmw_pal/`](nfsmw_pal) | Playable, about 30 FPS ([details](README.nfsmw.md)). PAL Spanish; other editions (`nfsmw_usa/`, ...) are made from it and committed beside it ([editions](docs/editions.md)) |
+| Need for Speed: Most Wanted (2005) | [`nfsmw_pal/`](nfsmw_pal) | Playable, about 30 FPS ([details](README.nfsmw.md)). PAL Spanish; other editions (USA, ...) are generated from it ([editions](docs/editions.md)) |
 | Halo 3 | [`halo3/`](halo3) | In progress, not playable yet |
 
 Every game is its own folder with its own NRO, and they all build on one shared SDK. A fix in `sdk/` reaches every
 game. To add a game, see [porting another game](docs/porting-another-game.md).
+
+## Run Need for Speed: Most Wanted
+
+1. Get the NRO for your edition from [Releases](https://github.com/nx-mod/xbox360-nx/releases) (PAL Spain or USA:
+   each `default.xex` needs its own build, see [editions](docs/editions.md)).
+2. Make a folder on the SD card, for example `sdmc:/switch/nfsmw-nx/`, and put in it the NRO and the release's
+   `nfsmw.toml`. Then the game, one of two ways:
+   - **Disc image on the console:** put your `.iso` or `.xiso` (any name) in the folder; the first start copies it into
+     `game_root/`. The image is one 7 GB file, so this needs an **exFAT** card (FAT32 cannot hold a file over 4 GB)
+     and 7 GB more free. exFAT is more prone to corruption on the Switch than FAT32.
+   - **Extracted on a PC** (works on FAT32, every file is under 1 GB):
+     `python3 tools/fase1_extraer.py "your image.iso" -o game_root`, then copy the `game_root/` folder next to the NRO.
+3. Build the shader library from the same image on a PC (Linux or WSL) and put `nfsmw_shaders_dk.nfsp` beside the
+   NRO. It is made from your disc, so it is not shipped:
+   ```sh
+   INSTALADOR=path/to/nfsmw-nx-installer shaders/nfsmw_biblioteca_dk_linux.sh out/lib "your image.iso"
+   ```
+   It needs `node`, `g++`, `python3` and `spirv-val`, and a checkout of
+   [nfsmw-nx-installer](https://github.com/StevensND/nfsmw-nx-installer) (see [shaders/README.md](shaders/README.md)).
+4. Start the NRO from the homebrew menu in full-memory (title) mode. With an image, the first start copies it
+   (several minutes); later starts skip that.
+
+## What nx-mod changed
+
+- One repository for several games on a shared SDK ([`rexglue-sdk-nx`](https://github.com/nx-mod/rexglue-sdk-nx)):
+  NFS Most Wanted, and Halo 3 in progress.
+- More editions from one code base: the PAL Spanish code is translated to the USA executable (`tools/editions/`).
+- The game can be copied out of a disc image on the console at first start (PC extraction is optional).
+- The deko3d shader library can be built on Linux and ARM64 with no native DXC (`shaders/nfsmw_biblioteca_dk_linux.sh`).
+- A crash when a race starts is fixed (stray function splits in the code generation settings).
+- Faster draw submission: inlined hashing in the geometry store and per-draw keys, and only the shader constants
+  the game changed are compared.
+- `nfsmw_intervalo_presentacion` (experimental): lifts the game's wait for a vblank before each frame, which rounds
+  menus down to 30 FPS.
+- Guest memory: read-only pages are mapped readable on the Switch (a storm of faults, and static in the audio).
+- Diagnostics for the renderer, all off by default ([devlog](docs/deko3d-devlog.md)).
+
+Open work is in [TODO.md](TODO.md).
 
 ## Layout
 
@@ -37,6 +77,9 @@ The steps are in [docs/building.md](docs/building.md).
 - **[StevensND](https://github.com/StevensND/nfsmw-nx)**: nfsmw-nx, the Switch port this repository is forked from:
   its Switch layer, renderer and documentation.
 - **[madelrandel-blip](https://github.com/madelrandel-blip/NFSMW-Recompiled)**: NFSMW Recompiled.
+- **[victorgbd](https://github.com/victorgbd/NFSMW-Recompiled-Mobile)**, **[codepdbh](https://github.com/codepdbh/nfsmw-android)**
+  and **[frankyfife](https://github.com/frankyfife/NFSMW-Recompiled_ff)**: their forks' findings (online over a LAN
+  server, frame pacing, on-device shader library) guide the [TODO](TODO.md).
 - **[Tom Clay](https://github.com/rexglue/rexglue-sdk)**: the ReXGlue SDK, built on the work of the
   **[Xenia](https://xenia.jp)** team.
 - ReXGlue forks whose codegen fixes are applied here, with credit in each commit:
