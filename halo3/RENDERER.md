@@ -60,6 +60,22 @@ What `HALO3_RECOMP` does that the runtime must match:
 
 Still refused (22): leftover braces, vertex-shader samples outside the helpers, a few broken lines.
 
+## The library route hits a wall (2026-10-22, first runs)
+
+The first console runs drew one draw per frame on the boot screen and identified 2 of 6 shaders. The ones that miss
+are not in any container we can scan: D3D's built-in shaders (raw microcode in `default.xex`, 9-27 words) and the
+boot/loading shaders (in data that does not appear raw: `shared.map` looks compressed). Comparing them with the 1,141
+containers (any length, any order) gives at most 18 % of words in common. Patched vertex shaders also need fuzzy
+matching.
+
+The working PC port (george0815/halo-3-recomp, the H3Recomp code base; no license, facts only) never builds a
+library: it translates the microcode each IM_LOAD carries to GLSL at run time and caches the compiled result. That
+covers everything above at once, and it is the on-console shader generation the TODO wants anyway.
+
+**Direction:** a GLSL output mode for our XenosRecomp (MIT), compiled into the game and run when an IM_LOAD arrives
+(cached by microcode hash): microcode → GLSL → uam → DKSH, with the existing DKSH cache. The offline library work
+stays useful as the test corpus: every container is checked with the host `uam` (devkitPro) before the console.
+
 ## Steps
 
 1. **Halo shader library.** Scan the maps for `10 2A 11` containers (the scanner, `shaders/nfsmw_buscar_contenedores.cpp`

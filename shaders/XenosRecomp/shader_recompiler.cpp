@@ -761,8 +761,17 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             default:
             {
                 auto findResult = interpolators.find(instr.vectorDest);
+#ifdef HALO3_RECOMP
+                // An export to an interpolator the shader does not declare: nothing reads it, it goes to a local.
+                if (findResult == interpolators.end())
+                {
+                    exportRegister = "oDescartado";
+                    break;
+                }
+#else
                 if (findResult == interpolators.end())
                     throw std::runtime_error("exportacion de vertices sin interpolador declarado");
+#endif
                 exportRegister = findResult->second;
                 break;
             }
@@ -1343,6 +1352,11 @@ void ShaderRecompiler::printDeko3dConstants(const ConstantTableContainer* consta
 
         case RegisterSet::Sampler:
         {
+#ifdef HALO3_RECOMP
+            // Halo 3: samplers come from the fetches (their own dimension), table or not. A table's generic
+            // "Sampler" type said 2D for a 3D fetch.
+            break;
+#endif
             // One texture per register with the type the constant table gives it (as the renderer reads it:
             // nfsmw_nativo_shaders.cpp), at binding R; its sampler at binding R too (another set: GLSL's
             // combined sampler takes the texture's binding, nfsmw_dk_glsl.cpp). deko3d has 32 texture
@@ -1480,6 +1494,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
         case RegisterSet::Sampler:
         {
+#ifdef HALO3_RECOMP
+            break;  // see printDeko3dConstants: the fetches declare them (s<slot>)
+#endif
             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
             {
                 println("#define {}_Texture{}DescriptorIndex (NFSMW_UBO ? NFSMW_COMPARTIDA_UINT({}) : vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {}))",
@@ -1837,6 +1854,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\tint a0 = 0;\n";
 #ifdef HALO3_RECOMP
     out += "\tint vfIndice = 0;\n";
+    out += "\tfloat4 oDescartado = 0.0;\n";
     // Loop counters the definition table does not give come from the GPU's loop constants (halo_loop).
     for (uint32_t i = 0; i < 32; i++)
         if (!enterosDefinidos.count(i))
