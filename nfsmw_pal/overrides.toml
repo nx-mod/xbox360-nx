@@ -60,11 +60,6 @@ ctr_as_local = true
 
 [functions]
 
-# Tail-call targets not inside any function (codegen UnresolvedCall): declared as functions so the b lands on a
-# known entry. Same fix as the port's other gaps.
-"0x8285CC90" = {}
-"0x825C8914" = {}
-"0x825C8080" = {}
 
 # Functions with a REX_HOOK_RAW hook that reads non-volatile registers of its caller. With
 # non_volatile_as_local those registers live in the caller's local variables; share_registers
