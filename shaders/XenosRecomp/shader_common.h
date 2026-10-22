@@ -187,6 +187,13 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
     return dimensions;
 }
 
+// Vertex shaders have no implicit LOD (Halo 3 fetches textures in them): HALO3_VS samples level 0. For every other
+// shader this is exactly the Sample call it replaces.
+#ifdef HALO3_VS
+#define NFSMW_SAMPLE(t, s, c) (t).SampleLevel(s, c, 0)
+#else
+#define NFSMW_SAMPLE(t, s, c) (t).Sample(s, c)
+#endif
 #ifdef NFSMW_DEKO3D
 // The same helpers with the register's texture and sampler (the translator's NAME_Texture2DDescriptorIndex and
 // NAME_SamplerDescriptorIndex are those objects in this mode). Same arithmetic as the heap versions.
@@ -197,7 +204,7 @@ float4 tfetch2D(Texture2D<float4> texture, SamplerState samplerState, float2 tex
         desplazamiento = offset * invSize;
     else
         desplazamiento = offset / getTexture2DDimensions(texture);
-    return texture.Sample(samplerState, texCoord + desplazamiento);
+    return NFSMW_SAMPLE(texture, samplerState, texCoord + desplazamiento);
 }
 
 float2 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2 texCoord, float2 offset)
@@ -290,7 +297,7 @@ float4 tfetch2DSombraMin(Texture2D<float4> texture, Texture2D<float4> pareja, Sa
 
 float4 tfetch3D(Texture3D<float4> texture, SamplerState samplerState, float3 texCoord)
 {
-    return texture.Sample(samplerState, texCoord);
+    return NFSMW_SAMPLE(texture, samplerState, texCoord);
 }
 
 struct CubeMapData
@@ -301,7 +308,7 @@ struct CubeMapData
 
 float4 tfetchCube(TextureCube<float4> texture, SamplerState samplerState, float3 texCoord, inout CubeMapData cubeMapData)
 {
-    return texture.Sample(samplerState, cubeMapData.cubeMapDirections[texCoord.z]);
+    return NFSMW_SAMPLE(texture, samplerState, cubeMapData.cubeMapDirections[texCoord.z]);
 }
 #else
 // Shadow map sampling. The translator emits tfetch2D for everything; the library rewrite step

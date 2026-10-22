@@ -200,6 +200,18 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
          * Stride and offset are in dwords; a mini fetch reuses the previous fetch's index.
          */
         out.resize(marcaPredicado);
+        bool escribe = false;
+        for (size_t i = 0; i < 4; i++)
+        {
+            const auto sw = getDestSwizzle(instr.dstSwizzle, i);
+            escribe |= sw >= FetchDestinationSwizzle::X && sw <= FetchDestinationSwizzle::W;
+        }
+        if (!escribe)
+        {
+            printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+            cerrarSiEscribePredicado(marcaPredicado);
+            return;
+        }
         const uint32_t slot = instr.constIndex * 3 + instr.constIndexSelect;
         slotsVf.insert(slot);
         if (!instr.isMiniFetch)
@@ -453,6 +465,9 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
 
 void ShaderRecompiler::recompile(const AluInstruction& instr)
 {
+#ifdef HALO3_RECOMP
+    bool soloW = false;  // op(): only the w component (MAXA)
+#endif
     if (instr.isPredicated)
         abrirPredicado(instr.predicateCondition);
     else
@@ -627,6 +642,10 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
                 default:
                     mask = instr.vectorWriteMask != 0 ? instr.vectorWriteMask : 0b1;
+#ifdef HALO3_RECOMP
+                    if (soloW)
+                        mask = 0b1000;
+#endif
                     break;
                 }
 
@@ -765,12 +784,28 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     else if (instr.vectorOpcode >= AluVectorOpcode::MaxA)
     {
         indent();
+#ifdef HALO3_RECOMP
+        soloW = true;  // the w of src0 by itself: the masked swizzle may not reach w
+        const std::string w = op(VECTOR_0);
+        soloW = false;
+        println("a0 = (int)clamp(floor({} + 0.5), -256.0, 255.0);", w);
+#else
         println("a0 = (int)clamp(floor(({}).w + 0.5), -256.0, 255.0);", op(VECTOR_0));
+#endif
     }
 
     uint32_t vectorWriteMask = instr.vectorWriteMask;
     if (instr.exportData)
         vectorWriteMask &= ~instr.scalarWriteMask;
+#ifdef HALO3_RECOMP
+    // Vector opcodes 30 and 31 are not defined (MAXA = 29 is the last). Nothing is written; marked to find later.
+    if (uint32_t(instr.vectorOpcode) > 29 && vectorWriteMask != 0)
+    {
+        indent();
+        println("// vector opcode {} not defined: r{} left as it was", uint32_t(instr.vectorOpcode), uint32_t(instr.vectorDest));
+        vectorWriteMask = 0;
+    }
+#endif
 
     if (vectorWriteMask != 0)
     {
@@ -919,6 +954,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         case AluVectorOpcode::Dst:
             print("dst({}, {})", op(VECTOR_0), op(VECTOR_1));
             break;
+#ifdef HALO3_RECOMP
+        default:  // an opcode with no translation: a name DXC reports, with its number
+            print("halo_op_vector_{}", uint32_t(instr.vectorOpcode));
+            break;
+#endif
         }
 
         if (instr.vectorSaturate)
@@ -927,7 +967,13 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         out += ";\n";
     }
 
+#ifdef HALO3_RECOMP
+    // Scalar opcodes past 50 (RETAIN_PREV) are not defined; Halo 3's compiler leaves them in instructions whose
+    // scalar half does nothing. They keep ps, as RETAIN_PREV.
+    if (instr.scalarOpcode != AluScalarOpcode::RetainPrev && uint32_t(instr.scalarOpcode) <= 50)
+#else
     if (instr.scalarOpcode != AluScalarOpcode::RetainPrev)
+#endif
     {
         if (instr.scalarOpcode >= AluScalarOpcode::SetpEq && instr.scalarOpcode <= AluScalarOpcode::SetpRstr)
         {
@@ -1147,6 +1193,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         case AluScalarOpcode::RetainPrev:  // keeps the previous scalar result
             out += "ps";
             break;
+        default:  // an opcode with no translation: a name DXC reports, with its number
+            print("halo_op_escalar_{}", uint32_t(instr.scalarOpcode));
+            break;
 #endif
         }
 
@@ -1329,6 +1378,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += '\n';
 
     isPixelShader = (shaderContainer->flags & 0x1) == 0;
+#ifdef HALO3_RECOMP
+    if (!isPixelShader)
+        out.insert(0, "#define HALO3_VS 1\n");  // texture fetches without implicit LOD (shader_common.h NFSMW_SAMPLE)
+#endif
 
     const auto constantTableContainer = reinterpret_cast<const ConstantTableContainer*>(shaderData + shaderContainer->constantTableOffset);
     constantTableData = reinterpret_cast<const uint8_t*>(&constantTableContainer->constantTable);
@@ -2267,6 +2320,20 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\t\tbreak;\n";
         out += "\t}\n";
     }
+#ifdef HALO3_RECOMP
+    else
+    {
+        // A forward jump to the end of the program (past the last control flow instruction) never reaches its label:
+        // its block closes here, which is what jumping to the end means.
+        cerrarPredicado();
+        while (indentation > 1)
+        {
+            --indentation;
+            indent();
+            out += "}\n";
+        }
+    }
+#endif
 
 #ifdef UNLEASHED_RECOMP
     if (hasMtxProjection)
