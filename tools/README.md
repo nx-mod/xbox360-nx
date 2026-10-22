@@ -12,7 +12,8 @@ In the order of [docs/building.md](../docs/building.md):
 | File | What it does |
 |---|---|
 | `fetch_thirdparty.py` | Fetches the third-party sources of the SDK into `sdk/thirdparty`. The repository only keeps the files this port changed. |
-| `fase1_extraer.py` ("phase 1: extract") | Extracts the Xbox 360 ISO into `assets/game_root` and prints the [XEX](../docs/glossary.md#xex) information. |
+| `fase1_extraer.py` ("phase 1: extract") | Extracts the Xbox 360 ISO into `assets/game_root` and prints the [XEX](../docs/glossary.md#xex) information. `--solo-xex` takes out only `default.xex` (all the code generator needs). |
+| `iso_a_ftp.py` ("ISO to FTP") | Developer tool: copies an ISO's files straight to the console's FTP server once (`python tools/iso_a_ftp.py <iso> <ip> /switch/<folder>/game_root`), without extracting them to disk first. Resumable. Players don't need it: the NRO unpacks an `.iso` placed next to it on first start. |
 | `codegen.sh` | Runs the code generator (`rexglue codegen`, which translates the game to C++) on an edition tree (`nfsmw_pal/`, or the `nfsmw_<edition>` copy of another [edition](../docs/glossary.md#edition)), then `llamadas_directas.py` and `copia_literal.py`. |
 | `build.ps1` | Configures and builds the [NRO](../docs/glossary.md#nro) of the default tree (`nfsmw_pal/`). |
 
