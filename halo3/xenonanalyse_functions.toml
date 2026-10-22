@@ -24,6 +24,7 @@
 "0x821FA650" = {}
 "0x821FA678" = {}
 "0x821FA6AC" = {}
+"0x822010D0" = {}  # reached only through a pointer: the campaign crashed loading 005_intro (2026-10-22)
 "0x82205CB8" = {}
 "0x82205D94" = {}
 "0x82205D9C" = {}
