@@ -51,6 +51,7 @@
 #include <rex/ui/presenter.h>
 #include <rex/ui/windowed_app_context.h>
 
+#include <rex/cvar.h>
 #include <rex/filesystem.h>
 #if HALO3_DEKO3D
 #include "../../nfsmw_pal/src/nfsmw_nativo_captura.h"  // PNG captures (nfsmw_captura_cada_s); to move into the SDK
@@ -127,6 +128,12 @@ uint32_t ConstantBase(uint32_t type_index) {
     default: return UINT32_MAX;
   }
 }
+
+// Geometry draws to the deko3d renderer. Off until they make a picture: on, the shader translation and compiles
+// starved the game (0 fps, audio static once the menu loaded), and the screen stayed black anyway.
+REXCVAR_DEFINE_BOOL(halo3_dibujar_geometria, false, "Halo3",
+                    "Send geometry draws to the deko3d renderer (testing; off = the menu runs as before drawing)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
  public:
@@ -791,6 +798,11 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
           destinos_->Copiar(rex::x360::LeerRegistrosCopia(registers_.data()));
           break;
         }
+        static const bool dibujar = REXCVAR_GET(halo3_dibujar_geometria);
+        if (!dibujar) {
+          ++sin_shaders_;  // not drawn (halo3_dibujar_geometria = false): copies and the swap still go through
+          break;
+        }
         // In depth-only mode (5) the vertex shader is enough.
         const bool solo_profundidad = (Register(rex::graphics::XE_GPU_REG_RB_MODECONTROL) & 0x7) == 5;
         if (vs_actual_ && (ps_actual_ || solo_profundidad)) {
@@ -896,7 +908,8 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   uint64_t dibujados_ = 0, sin_shaders_ = 0;
 
   void Identify(uint32_t type) {
-    if (type > 1 || !shaders_.activo()) {
+    static const bool dibujar = REXCVAR_GET(halo3_dibujar_geometria);
+    if (type > 1 || !dibujar || !shaders_.activo()) {
       return;
     }
     if (type == 0) {
