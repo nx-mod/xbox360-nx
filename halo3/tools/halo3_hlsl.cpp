@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -171,6 +172,11 @@ int main(int argc, char** argv) try {
       recompiler.recompile(container.data(), include);
     } catch (const std::exception& error) {
       std::printf("  %s: rejected: %s\n", name.c_str(), error.what());
+      if (std::getenv("HALO3_HLSL_COLA")) {  // the tail of what was written, to see where a runaway loops
+        const size_t n = std::min<size_t>(recompiler.out.size(), 3000);
+        std::printf("--- last %zu of %zu bytes:\n%s\n---\n", n, recompiler.out.size(),
+                    recompiler.out.c_str() + recompiler.out.size() - n);
+      }
       ++skipped;
       continue;
     }

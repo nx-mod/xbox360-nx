@@ -197,6 +197,14 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
     // NFSMW: D3D patches the fetch swizzle according to the vertex declaration; the
     // native renderer passes the mapping through g_InputRemap.
     int32_t remapLocation = -1;
+#ifdef HALO3_RECOMP
+    {
+        const uint32_t clave = (uint32_t(findResult->second.usage) << 4) | uint32_t(findResult->second.usageIndex);
+        const auto it = std::find(ordenEntradas.begin(), ordenEntradas.end(), clave);
+        if (it != ordenEntradas.end())
+            remapLocation = int32_t(it - ordenEntradas.begin());
+    }
+#else
     for (auto& usageLocation : USAGE_LOCATIONS)
     {
         if (usageLocation.usage == findResult->second.usage && usageLocation.usageIndex == findResult->second.usageIndex)
@@ -205,6 +213,7 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             break;
         }
     }
+#endif
     if (remapLocation >= 0)
         out += "remapInput(float4(";
 #endif
@@ -1488,6 +1497,21 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             }
         #endif
 
+#ifdef HALO3_RECOMP
+            // Halo 3: every distinct (usage, index) takes the next location, in the order of the element list (its
+            // skinned meshes use more usages than the 16-entry table knows). The renderer applies the same rule
+            // (EntradaShader::ubicaciones_por_orden). An element repeated in the list is declared once.
+            {
+                const uint32_t clave = (uint32_t(vertexElement.usage) << 4) | uint32_t(vertexElement.usageIndex);
+                if (std::find(ordenEntradas.begin(), ordenEntradas.end(), clave) != ordenEntradas.end())
+                {
+                    vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+                    continue;
+                }
+                print("\t[[vk::location({})]] ", ordenEntradas.size());
+                ordenEntradas.push_back(clave);
+            }
+#else
             out += '\t';
 
             for (auto& usageLocation : USAGE_LOCATIONS)
@@ -1498,6 +1522,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     break;
                 }
             }
+#endif
 
             println("in {0} i{1}{2} : {3}{2},", usageType, USAGE_VARIABLES[uint32_t(vertexElement.usage)],
                 uint32_t(vertexElement.usageIndex), USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);
@@ -1582,7 +1607,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\n";
     }
 
-    bool printedRegisters[32]{};
+#ifdef HALO3_RECOMP
+    // Halo 3 uses temporaries past r31 (r52 seen); the Xenos has more. NFS keeps its 32.
+    constexpr size_t kTemporales = 64;
+#else
+    constexpr size_t kTemporales = 32;
+#endif
+    bool printedRegisters[kTemporales]{};
 
     uint32_t interpolatorCount = (shader->interpolatorInfo >> 5) & 0x1F;
 
@@ -1621,7 +1652,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\n";
     }
 
-    for (size_t i = 0; i < 32; i++)
+    for (size_t i = 0; i < kTemporales; i++)
     {
         if (!printedRegisters[i])
         {
@@ -1676,6 +1707,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     uint32_t instrAddress = 0;
     uint32_t instrSize = shader->size;
     bool simpleControlFlow = true;
+#ifdef HALO3_RECOMP
+    // Halo 3: the simple (structured) form closes a forward jump's block at its target. A target at or before the
+    // jump, or a jump together with loops (its target can be past the loop's end), interleaves the braces; those
+    // shaders take the general form (switch on pc), which is right for any control flow.
+    uint32_t pcPrimeraPasada = 0;
+    bool hayBucle = false, haySalto = false;
+#endif
 
     while (instrAddress < instrSize)
     {
@@ -1713,19 +1751,36 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     simpleControlFlow = false;
                 else
                     ++ifEndLabels[cfInstr.condJmp.address];
-
+#ifdef HALO3_RECOMP
+                haySalto = true;
+                if (cfInstr.condJmp.address <= pcPrimeraPasada)
+                    simpleControlFlow = false;
+#endif
                 break;
             }
+#ifdef HALO3_RECOMP
+            case ControlFlowOpcode::LoopStart:
+            case ControlFlowOpcode::LoopEnd:
+                hayBucle = true;
+                break;
+#endif
             }
 
             if (address != 0)
                 instrSize = std::min<uint32_t>(instrSize, address * 12);
+#ifdef HALO3_RECOMP
+            ++pcPrimeraPasada;
+#endif
         }
 
         controlFlowCode += 3;
         instrAddress += 12;
     }
 
+#ifdef HALO3_RECOMP
+    if (hayBucle && haySalto)
+        simpleControlFlow = false;
+#endif
     if (simpleControlFlow)
     {
         out += '\n';

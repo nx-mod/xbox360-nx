@@ -20,10 +20,10 @@
      detail at any distance.
    - [codepdbh/nfsmw-android](https://github.com/codepdbh/nfsmw-android): the shader library generated on the device
      at first start (then the release needs no PC step at all); cutscene audio fixes on skip.
-5. **Online** over a LAN server: [victorgbd/nfsmw-server-lan](https://github.com/victorgbd/nfsmw-server-lan) stands in
+5. **LAN play (online)** through a LAN server: [victorgbd/nfsmw-server-lan](https://github.com/victorgbd/nfsmw-server-lan) stands in
    for EA's 2005 servers (Quick Match works between phones). Port the game-side changes of
    [NFSMW-Recompiled-Mobile](https://github.com/victorgbd/NFSMW-Recompiled-Mobile) (`docs/diario/red-y-privilegios.md`)
-   and add a server IP setting.
+   and add a server IP setting. Needs the SDK networking below.
 6. Spain runs some menus at 30 FPS where USA reaches 60; a crash when closing the game.
 7. Remove the temporary stderr diagnostics once the hunts are over.
 
@@ -36,3 +36,5 @@
 ## SDK
 
 - Shader library generation on the console as an SDK feature, for every game.
+- **Networking for LAN play**: the Xbox 360 network calls (XNet, sockets, Xbox Live sign-in stand-ins) over the
+  Switch's sockets, shared by every game. NFS's LAN server is the first user; Halo 3 system link could follow.

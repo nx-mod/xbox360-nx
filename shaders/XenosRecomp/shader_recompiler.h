@@ -24,6 +24,9 @@ struct StringBuffer
 struct ShaderRecompiler : StringBuffer
 {
     uint32_t indentation = 0;
+#ifdef HALO3_RECOMP
+    std::vector<uint32_t> ordenEntradas;  // (usage << 4 | index) of each vertex input, in location order
+#endif
     bool isPixelShader = false;
     const uint8_t* constantTableData = nullptr;
     std::unordered_map<uint32_t, VertexElement> vertexElements;
@@ -41,6 +44,10 @@ struct ShaderRecompiler : StringBuffer
 
     void indent()
     {
+        // An unbalanced block structure underflows the (unsigned) depth and would print billions of tabs (Halo 3:
+        // 181 MB of them, then out of memory). Fail the shader instead.
+        if (indentation > 64)
+            throw std::runtime_error("profundidad de bloques desbocada: estructura de control desequilibrada");
         for (uint32_t i = 0; i < indentation; i++)
             out += '\t';
     }

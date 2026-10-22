@@ -1,7 +1,8 @@
 // Runs the installer page's WebAssembly DXC (wasm/dxc_web.mjs, built from dxc_web.cpp here) from Node over a folder
 // of HLSL, so the shader library can be built where there is no native DXC (Linux on ARM, the Switch dev phone).
 //
-//   node shaders/wasm/dxc_node.mjs <dxc_web.mjs> <hlsl folder> <spirv folder> [--sin-invertir-y] [-D NAME[=VALUE]]...
+//   node shaders/wasm/dxc_node.mjs <dxc_web.mjs> <hlsl folder> <spirv folder> [--sin-invertir-y] [--seguir]
+//        [-D NAME[=VALUE]]...
 //
 // dxc_web.cpp's compile() has the arguments fixed: -spirv -T vs_6_6|ps_6_6 -E main -HV 2021
 // -fspv-target-env=vulkan1.2 -fvk-use-dx-layout -Werror=parameter-usage, plus -fvk-invert-y for vertex shaders.
@@ -12,7 +13,8 @@
 // vertex shaders come out upside down on deko3d and their triangles are culled (the winding flips with y).
 // -DNFSMW_DEKO3D cannot be passed to compile(), so each -D here goes at the top of the source as a #define instead.
 // p_* files are pixel shaders, the rest vertex shaders, as in that script.
-// Exits 1 on the first shader DXC rejects (its diagnostics go to stderr).
+// Exits 1 on the first shader DXC rejects (its diagnostics go to stderr). --seguir ("keep going") compiles the
+// rest, prints each rejection and the count at the end, and exits 2 if any failed (for a game still being brought up).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,8 +28,10 @@ if (!modulo || !entrada || !salida) {
 }
 const defines = [];
 let sinInvertirY = false;
+let seguir = false;
 for (let i = 3; i < args.length; i++) {
   if (args[i] === '--sin-invertir-y') sinInvertirY = true;
+  else if (args[i] === '--seguir') seguir = true;
   else if (args[i] === '-D' && i + 1 < args.length) defines.push(args[++i]);
   else if (args[i].startsWith('-D')) defines.push(args[i].slice(2));
 }
@@ -72,6 +76,7 @@ fs.mkdirSync(salida, { recursive: true });
 
 const ficheros = fs.readdirSync(entrada).filter((n) => n.endsWith('.hlsl')).sort();
 let n = 0;
+let rechazados = 0;
 for (const nombre of ficheros) {
   const base = nombre.slice(0, -5);
   const fuente = cabecera + fs.readFileSync(path.join(entrada, nombre), 'utf8');
@@ -82,7 +87,10 @@ for (const nombre of ficheros) {
   const rc = dxc.ccall('compile', 'number', ['string', 'string', 'number'], [e, s, base.startsWith('p_') ? 0 : 1]);
   if (rc !== 0) {
     console.error(`DXC rechazo ${base} (${rc})\n${errores.join('\n')}`);
-    process.exit(1);
+    if (!seguir) process.exit(1);
+    rechazados++;
+    try { dxc.FS.unlink(e); } catch {}
+    continue;
   }
   fs.writeFileSync(path.join(salida, `${base}.spv`), dxc.FS.readFile(s));
   dxc.FS.unlink(e);
@@ -90,4 +98,5 @@ for (const nombre of ficheros) {
   n++;
 }
 console.log(`dxc_node: ${n} shaders -> ${salida}${sinInvertirY ? ' (sin -fvk-invert-y)' : ''}` +
-            `${defines.length ? ` (${defines.join(' ')})` : ''}`);
+            `${defines.length ? ` (${defines.join(' ')})` : ''}` + (seguir ? `; ${rechazados} rechazados` : ''));
+if (rechazados) process.exit(2);
