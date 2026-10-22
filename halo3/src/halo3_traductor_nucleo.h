@@ -36,7 +36,8 @@ inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo
   salidas = vertices ? 0u : uint32_t(PIXEL_SHADER_OUTPUT_COLOR0 | PIXEL_SHADER_OUTPUT_COLOR1 |
                                      PIXEL_SHADER_OUTPUT_COLOR2 | PIXEL_SHADER_OUTPUT_COLOR3 |
                                      PIXEL_SHADER_OUTPUT_DEPTH);
-  std::string texto;
+  std::string texto, primera;
+  uint32_t todas = salidas;
   for (int pasada = 0; pasada < 2; ++pasada) {
     const std::vector<uint8_t> c = contenedor::ContenedorDeMicrocodigo(vertices, microcodigo, salidas, interpoladores);
     ShaderRecompiler traductor;
@@ -45,7 +46,17 @@ inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo
     texto = std::move(traductor.out);
     if (vertices) break;
     const uint32_t escritas = SalidasEscritas(Cuerpo(texto));
+    if (pasada == 1) {
+      // The second text must not write an output it no longer declares (it happened once, in the general form):
+      // then the first, which declares them all.
+      if (escritas & ~salidas) {
+        texto = std::move(primera);
+        salidas = todas;
+      }
+      break;
+    }
     if (escritas == salidas) break;
+    primera = texto;
     salidas = escritas;
   }
   return texto;

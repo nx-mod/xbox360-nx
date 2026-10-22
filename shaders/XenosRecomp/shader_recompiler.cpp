@@ -2135,6 +2135,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     // Forward jumps as (pc, target): conditional ones open an `if` that closes at the target; an unconditional one
     // that is the last instruction before such a target is that if's `else`, which closes at its own target.
     std::vector<std::pair<uint32_t, uint32_t>> saltosSi, saltosIncondicionales;
+    // Loops as [LoopStart, LoopEnd + 1): structured (a `for`) as long as no jump crosses their edges.
+    std::vector<std::pair<uint32_t, uint32_t>> bucles;
+    std::vector<uint32_t> buclesAbiertos;
 #endif
 
     while (instrAddress < instrSize)
@@ -2194,8 +2197,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             }
 #ifdef HALO3_RECOMP
             case ControlFlowOpcode::LoopStart:
+                hayBucle = true;
+                buclesAbiertos.push_back(pcPrimeraPasada);
+                break;
             case ControlFlowOpcode::LoopEnd:
                 hayBucle = true;
+                // Only start/end pairs are loops here: an unpaired marker (the scan can read past the control flow
+                // into instruction words) structures nothing, as before.
+                if (!buclesAbiertos.empty())
+                {
+                    bucles.push_back({buclesAbiertos.back(), pcPrimeraPasada + 1});
+                    buclesAbiertos.pop_back();
+                }
                 break;
 #endif
             }
@@ -2216,8 +2229,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         std::fprintf(stderr, "[cf] %s: simple antes=%d bucle=%d saltos_si=%zu incondicionales=%zu\n",
                      isPixelShader ? "ps" : "vs", int(simpleControlFlow), int(hayBucle), saltosSi.size(),
                      saltosIncondicionales.size());
-    if (hayBucle && haySalto)
-        simpleControlFlow = false;
     /*
      * The if/else shape D3D compiles: `cond_jmp T1` (skip the then part), the then part, `jmp T2` as the last
      * instruction before T1 (skip the else part), the else part, T2. Accepted only when T1 closes that one `if` and
@@ -2225,9 +2236,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
      * general form, which is right for any control flow but which the GPU compilers handle badly (Halo 3's
      * vertex shaders with it reached 155 registers).
      */
-    if (simpleControlFlow && !saltosIncondicionales.empty())
+    if (simpleControlFlow && (!saltosIncondicionales.empty() || (hayBucle && haySalto)))
     {
-        std::vector<std::pair<uint32_t, uint32_t>> regiones = saltosSi;
         std::vector<std::pair<uint32_t, uint32_t>> elses;
         for (auto [u, t2] : saltosIncondicionales)
         {
@@ -2241,21 +2251,56 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 break;
             }
             elses.push_back({t1, t2});
-            regiones.push_back({t1, t2});
-            regiones.push_back({si->first, t2});
         }
-        // Two regions [a0, a1) and [b0, b1) cross when a0 < b0 < a1 < b1.
-        for (size_t i = 0; simpleControlFlow && i < regiones.size(); i++)
-            for (size_t j = 0; j < regiones.size(); j++)
+        // The braces as the structured form writes them, simulated: at each pc first the `if`s whose label it is
+        // close (an if/else's if turns into its else, which closes at T2), then its instruction opens a loop, closes
+        // one or opens an `if`. Every close must find its own brace on top; anything else keeps the general form.
+        if (simpleControlFlow)
+        {
+            struct Abierto { bool bucle; uint32_t fin; };
+            std::vector<Abierto> pila;
+            std::map<uint32_t, std::vector<uint32_t>> siEn;
+            std::set<uint32_t> abreBucle, cierraBucle;
+            for (auto [c, t] : saltosSi)
+                siEn[c].push_back(t);
+            for (auto [a, e] : bucles)
             {
-                const auto [a0, a1] = regiones[i];
-                const auto [b0, b1] = regiones[j];
-                if (a0 < b0 && b0 < a1 && a1 < b1)
-                {
-                    simpleControlFlow = false;
-                    break;
-                }
+                abreBucle.insert(a);
+                cierraBucle.insert(e - 1);
             }
+            std::map<uint32_t, uint32_t> elseDe(elses.begin(), elses.end());
+            for (uint32_t p = 0; simpleControlFlow && p <= pcPrimeraPasada; p++)
+            {
+                while (!pila.empty() && !pila.back().bucle && pila.back().fin == p)
+                {
+                    if (const auto e = elseDe.find(p); e != elseDe.end())
+                    {
+                        pila.back().fin = e->second;
+                        elseDe.erase(e);
+                        break;
+                    }
+                    pila.pop_back();
+                }
+                for (const Abierto& a : pila)
+                    if (!a.bucle && a.fin == p)
+                        simpleControlFlow = false;  // its label comes while a brace opened after it is still open
+                if (abreBucle.count(p))
+                    pila.push_back({true, 0});
+                if (cierraBucle.count(p))
+                {
+                    if (pila.empty() || !pila.back().bucle)
+                        simpleControlFlow = false;
+                    else
+                        pila.pop_back();
+                }
+                if (const auto si = siEn.find(p); si != siEn.end())
+                    for (uint32_t t : si->second)
+                        pila.push_back({false, t});
+            }
+            for (const Abierto& a : pila)
+                if (a.bucle)
+                    simpleControlFlow = false;  // the ifs still open close at the end of the program; loops cannot
+        }
         if (simpleControlFlow)
             for (auto [t1, t2] : elses)
             {
