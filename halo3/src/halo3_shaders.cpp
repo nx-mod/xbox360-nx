@@ -15,6 +15,10 @@
 #include <unordered_map>
 #include <vector>
 
+#if REX_PLATFORM_SWITCH
+extern "C" const char* RexSwitchLogDir(void);  // the rexglue log folder, ending in '/'
+#endif
+
 namespace halo3 {
 namespace {
 
@@ -211,8 +215,19 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
   } else {
     ++d.estadisticas.sin_identificar;
     if (d.avisos++ < kMaxAvisos) {
-      REXLOG_WARN("[halo3] {} shader sin identificar: {} palabras, mejor parecido {} y segundo {}",
-                  vertices ? "vertex" : "pixel", microcodigo.size(), mejor, segundo);
+      // To stderr (it survives closing the game) and the microcode to logs/rex/, to compare with the library.
+      std::fprintf(stderr, "[halo3] %s shader sin identificar: %zu palabras, huella %016llX, mejor parecido %zu y segundo %zu\n",
+                   vertices ? "vertex" : "pixel", microcodigo.size(), static_cast<unsigned long long>(clave), mejor,
+                   segundo);
+#if REX_PLATFORM_SWITCH
+      char ruta[512];
+      std::snprintf(ruta, sizeof(ruta), "%sshader_sin_identificar_%c_%016llX.bin", RexSwitchLogDir(),
+                    vertices ? 'v' : 'p', static_cast<unsigned long long>(clave));
+      if (FILE* f = std::fopen(ruta, "wb")) {
+        std::fwrite(microcodigo.data(), sizeof(uint32_t), microcodigo.size(), f);  // host order
+        std::fclose(f);
+      }
+#endif
     }
   }
   d.cache.emplace(clave, elegido);
