@@ -190,8 +190,40 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
     out += " = ";
 
     auto findResult = vertexElements.find(address);
+#ifdef HALO3_RECOMP
+    if (findResult == vertexElements.end())
+    {
+        /*
+         * Halo 3 reads buffers with vertex fetches that no vertex element declares: in pixel shaders (no vertex
+         * input at all) and for extra streams in vertex shaders. Read as a buffer load: the fetch constant's range,
+         * which the renderer copies (byte-swapped as for vertex data) and binds as storage buffer g_vf<slot>.
+         * Stride and offset are in dwords; a mini fetch reuses the previous fetch's index.
+         */
+        out.resize(marcaPredicado);
+        const uint32_t slot = instr.constIndex * 3 + instr.constIndexSelect;
+        slotsVf.insert(slot);
+        if (!instr.isMiniFetch)
+        {
+            indent();
+            println("vfIndice = int({}(r{}.{}));", instr.isIndexRounded ? "round" : "floor", uint32_t(instr.srcRegister),
+                SWIZZLES[instr.srcSwizzle]);
+        }
+        indent();
+        print("r{}.", uint32_t(instr.dstRegister));
+        printDstSwizzle(instr.dstSwizzle, false);
+        print(" = halo_vfetch(g_vf{}, vfIndice * {} + ({}), {}, {}, {}, {}).", slot, uint32_t(instr.stride),
+            int32_t(instr.offset), uint32_t(instr.format), uint32_t(instr.signedRfModeAll), uint32_t(instr.numFormatAll),
+            int32_t(instr.expAdjust));
+        printDstSwizzle(instr.dstSwizzle, true);
+        out += ";\n";
+        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+        cerrarSiEscribePredicado(marcaPredicado);
+        return;
+    }
+#else
     if (findResult == vertexElements.end())
         throw std::runtime_error("FETCH de vertices sin elemento declarado");
+#endif
 
 #ifdef NFSMW_RECOMP
     // NFSMW: D3D patches the fetch swizzle according to the vertex declaration; the
@@ -306,6 +338,11 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     {
         constName = fmt::format("s{}", instr.constIndex);
         constNamePtr = constName.c_str();
+#ifdef HALO3_RECOMP
+        // Halo 3 has no constant table: the samplers are the ones its fetches use, with the dimension each fetch
+        // states. Declared at the end (see the end of recompile).
+        samplersHalo.emplace(uint32_t(instr.constIndex), uint32_t(instr.dimension));
+#endif
     }
 
 #ifdef UNLEASHED_RECOMP
@@ -318,6 +355,23 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     }
 #endif
 
+#ifdef HALO3_RECOMP
+    {
+        // A fetch that writes no component (all masked or constant 0/1): only the constants, no read.
+        bool escribe = false;
+        for (size_t i = 0; i < 4; i++)
+        {
+            const auto sw = getDestSwizzle(instr.dstSwizzle, i);
+            escribe |= sw >= FetchDestinationSwizzle::X && sw <= FetchDestinationSwizzle::W;
+        }
+        if (!escribe)
+        {
+            printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+            cerrarSiEscribePredicado(marcaPredicado);
+            return;
+        }
+    }
+#endif
     indent();
     print("r{}.", instr.dstRegister);
     printDstSwizzle(instr.dstSwizzle, false);
@@ -560,6 +614,16 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
                 case AluVectorOpcode::Max4:
                     mask = 0b1111;
                     break;
+#ifdef HALO3_RECOMP
+                // SETP_*_PUSH compares one component of each source, the w (Xenia's translators), whatever the
+                // write mask; with Halo's masks the full swizzle reached && and DXC refused the vectors.
+                case AluVectorOpcode::SetpEqPush:
+                case AluVectorOpcode::SetpNePush:
+                case AluVectorOpcode::SetpGtPush:
+                case AluVectorOpcode::SetpGePush:
+                    mask = 0b1000;
+                    break;
+#endif
 
                 default:
                     mask = instr.vectorWriteMask != 0 ? instr.vectorWriteMask : 0b1;
@@ -1079,6 +1143,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         case AluScalarOpcode::Cos:
             print("cos({})", op(SCALAR_0));
             break;
+#ifdef HALO3_RECOMP
+        case AluScalarOpcode::RetainPrev:  // keeps the previous scalar result
+            out += "ps";
+            break;
+#endif
         }
 
         if (instr.scalarSaturate)
@@ -1180,7 +1249,11 @@ void ShaderRecompiler::printDeko3dConstants(const ConstantTableContainer* consta
 
             if (constantInfo->registerCount > 1)
             {
+#ifdef HALO3_RECOMP
+                uint32_t tailCount = 256 - constantInfo->registerIndex;  // Halo 3's pixel shaders read up to c255
+#else
                 uint32_t tailCount = (isPixelShader ? 224 : 256) - constantInfo->registerIndex;
+#endif
                 println("#define {}(INDEX) select((INDEX) < {}, g_Ubo{}.v[{} + min(INDEX, {})], 0.0)",
                     constantName, tailCount, shaderName, constantInfo->registerIndex.get(), tailCount - 1);
             }
@@ -1438,6 +1511,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     const auto shader = reinterpret_cast<const Shader*>(shaderData + shaderContainer->shaderOffset);
 
+#ifdef HALO3_RECOMP
+    marcaBuffersVf = out.size();  // the g_vf buffers are declared here once the body has been written
+#endif
     out += "#ifndef __spirv__\n";
 
     if (isPixelShader)
@@ -1597,6 +1673,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
                 u.value = definition->values[i].get();
 
+#ifdef HALO3_RECOMP
+                enterosDefinidos.insert((definition->registerIndex - 8992) / 4 + i);
+#endif
                 println("\tint4 i{} = int4({}, {}, {}, {});",
                     (definition->registerIndex - 8992) / 4 + i, u.b.x, u.b.y, u.b.z, u.b.w);
             }
@@ -1608,8 +1687,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
 
 #ifdef HALO3_RECOMP
-    // Halo 3 uses temporaries past r31 (r52 seen); the Xenos has more. NFS keeps its 32.
-    constexpr size_t kTemporales = 64;
+    // Halo 3 uses temporaries past r31 (r64 and up seen); the Xenos has 128. NFS keeps its 32.
+    constexpr size_t kTemporales = 128;
 #else
     constexpr size_t kTemporales = 32;
 #endif
@@ -1675,6 +1754,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     }
 
     out += "\tint a0 = 0;\n";
+#ifdef HALO3_RECOMP
+    out += "\tint vfIndice = 0;\n";
+    // Loop counters the definition table does not give come from the GPU's loop constants (halo_loop).
+    for (uint32_t i = 0; i < 32; i++)
+        if (!enterosDefinidos.count(i))
+            println("\tint4 i{0} = halo_loop({0});", i);
+#endif
     out += "\tint aL = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
@@ -1685,6 +1771,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 #endif
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";
     }
+#ifdef HALO3_RECOMP
+    else
+        out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";  // Halo's vertex shaders fetch cubemaps too
+#endif
 
     const be<uint32_t>* code = reinterpret_cast<const be<uint32_t>*>(shaderData + shaderContainer->virtualSize + shader->physicalOffset);
 
@@ -2187,4 +2277,45 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 #endif
 
     out += "}";
+
+#ifdef HALO3_RECOMP
+    // The buffers the vertex fetches without an element read: storage buffers in set 5, bound in slot order from 0
+    // (deko3d has 16 per stage). The slot is in the name, which is how the renderer knows what goes in each binding.
+    if (!slotsVf.empty())
+    {
+        std::string declaraciones;
+        uint32_t enlace = 0;
+        for (uint32_t slot : slotsVf)
+        {
+            if (enlace == 16)
+                declaraciones += "#error \"more than 16 vertex fetch buffers\"\n";
+            declaraciones += fmt::format("[[vk::binding({}, 5)]] ByteAddressBuffer g_vf{};\n", enlace++, slot);
+        }
+        out.insert(marcaBuffersVf, declaraciones + "\n");
+    }
+    // The samplers its texture fetches use: texture and sampler at binding = slot (0-31, no NFS shadow pair).
+    // 1/size is in the shared constants for slots 0-15 only (360 + slot * 8); the rest get 0 (offsets ignored).
+    if (!samplersHalo.empty())
+    {
+        std::string declaraciones = "#ifdef NFSMW_DEKO3D\n";
+        for (auto [slot, dimension] : samplersHalo)
+        {
+            // A 1D fetch reads a 2D texture of height 1 (tfetch1D, halo3_shader_common.h).
+            const char* nombre = dimension == uint32_t(TextureDimension::Texture3D) ? "3D"
+                : dimension == uint32_t(TextureDimension::TextureCube) ? "Cube" : "2D";
+            declaraciones += fmt::format("[[vk::binding({0}, 0)]] Texture{1}<float4> s{0}_Textura;\n", slot, nombre);
+            declaraciones += fmt::format("[[vk::binding({0}, 1)]] SamplerState s{0}_Muestreo;\n", slot);
+            declaraciones += fmt::format("#define s{0}_Texture{1}DescriptorIndex s{0}_Textura\n", slot,
+                dimension == uint32_t(TextureDimension::Texture1D) ? "1D" : nombre);
+            declaraciones += fmt::format("#define s{0}_SamplerDescriptorIndex s{0}_Muestreo\n", slot);
+            if (slot < 16)
+                declaraciones += fmt::format("#define s{0}_InvTamano float2(NFSMW_COMPARTIDA_FLOAT({1}), NFSMW_COMPARTIDA_FLOAT({2}))\n",
+                    slot, 360 + slot * 8, 364 + slot * 8);
+            else
+                declaraciones += fmt::format("#define s{0}_InvTamano float2(0.0, 0.0)\n", slot);
+        }
+        declaraciones += "#endif\n\n";
+        out.insert(marcaBuffersVf, declaraciones);
+    }
+#endif
 }

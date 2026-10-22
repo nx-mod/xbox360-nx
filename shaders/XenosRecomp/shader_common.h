@@ -99,7 +99,11 @@ struct PushConstants
 // -fvk-use-dx-layout each float4 takes 16 contiguous bytes, so any 4-byte word of the shared block is
 // a component: v[B / 16][(B % 16) / 4], and asuint reads it without changing a bit.
 struct NfsmwBloqueVs { float4 v[256]; };
+#ifdef HALO3_RECOMP
+struct NfsmwBloquePs { float4 v[256]; };  // Halo 3's pixel shaders read up to c255
+#else
 struct NfsmwBloquePs { float4 v[224]; };
+#endif
 #ifdef NFSMW_DEKO3D
 // The 1/size pairs of the 16 sampler registers end at byte 360 + 16 * 8 = 488, past the 23 float4 below: NVK reads
 // beyond the declared array, Mesa's GLSL front end in uam rejects a constant index past it. 31 float4 = 496 bytes,

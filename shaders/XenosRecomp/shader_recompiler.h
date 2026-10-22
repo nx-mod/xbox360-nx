@@ -3,6 +3,11 @@
 #include "shader.h"
 #include "shader_code.h"
 
+#include <algorithm>
+#include <set>
+#include <stdexcept>
+#include <vector>
+
 struct StringBuffer
 {
     std::string out;
@@ -26,6 +31,10 @@ struct ShaderRecompiler : StringBuffer
     uint32_t indentation = 0;
 #ifdef HALO3_RECOMP
     std::vector<uint32_t> ordenEntradas;  // (usage << 4 | index) of each vertex input, in location order
+    std::set<uint32_t> slotsVf;           // vertex fetch slots read as buffers (no vertex element)
+    size_t marcaBuffersVf = 0;            // where their declarations go
+    std::map<uint32_t, uint32_t> samplersHalo;  // texture fetch slot -> TextureDimension, without a constant table
+    std::set<uint32_t> enterosDefinidos;        // integer constants the definition table gives
 #endif
     bool isPixelShader = false;
     const uint8_t* constantTableData = nullptr;

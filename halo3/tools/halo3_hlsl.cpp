@@ -10,8 +10,8 @@
  *  - g_c: every float register (256 for vertex shaders, 224 for pixel shaders, XenosRecomp's limits), so each
  *    constant is read by register number, relative addressing included;
  *  - g_b0..g_b15: the boolean registers of the shader's stage;
- *  - g_s0..g_s15: the texture fetch slots (deko3d bindings 0-15). The dimension of each fetch comes from the
- *    instruction itself, not from the table.
+ *  - no samplers: XenosRecomp (HALO3_RECOMP) declares the slots the texture fetches use, with each fetch's own
+ *    dimension, at binding = slot.
  *
  * The renderer fills the constants by register, as the Xbox 360 GPU sees them, so no names are needed at run time.
  *
@@ -79,13 +79,11 @@ std::vector<uint8_t> WithSyntheticConstantTable(const std::vector<uint8_t>& in) 
     uint16_t rows, columns, elements;
   };
   std::vector<Entry> entries;
-  entries.push_back({"g_c", 2, 0, uint16_t(pixel ? 224 : 256), 1, 3, 1, 4, uint16_t(pixel ? 224 : 256)});
+  entries.push_back({"g_c", 2, 0, 256, 1, 3, 1, 4, 256});  // Halo 3's pixel shaders read up to c255 too
   for (uint16_t i = 0; i < 16; ++i) {
     entries.push_back({"g_b" + std::to_string(i), 0, i, 1, 0, 1, 1, 1, 1});
   }
-  for (uint16_t i = 0; i < 16; ++i) {
-    entries.push_back({"g_s" + std::to_string(i), 3, i, 1, 4, 12, 1, 1, 1});  // Object, Sampler2D
-  }
+  // No samplers: XenosRecomp (HALO3_RECOMP) declares the ones the fetches use, with their real dimension.
 
   // Layout, relative to the ConstantTable (constantTableData): the table (28 bytes), the ConstantInfo array
   // (20 bytes each), the TypeInfo array (16 bytes each), then the names.
