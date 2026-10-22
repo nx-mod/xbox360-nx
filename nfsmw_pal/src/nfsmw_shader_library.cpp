@@ -68,10 +68,13 @@ void Validar(Shader& s) {
   Exigir(s.original.size() >= 24 && s.original.size() <= kMaxOriginal,
          "Longitud del contenedor fuera de limites");
   const uint32_t firma = BE(s.original.data());
-  Exigir((firma & ~1u) == 0x102A0E00, "Firma de contenedor desconocida");
+  // 2005 layout (NFS Most Wanted) or 2008 (Halo 3; XenosRecomp's own): same header fields for what is checked here.
+  Exigir((firma & ~1u) == 0x102A0E00 || (firma & ~1u) == 0x102A1100, "Firma de contenedor desconocida");
   const uint32_t virtuales = BE(s.original.data() + 4);
   const uint32_t fisicos = BE(s.original.data() + 8);
-  Exigir(virtuales >= 24 && fisicos && !(fisicos % 12) &&
+  // The 2005 physical part is whole instructions (12 bytes); Halo 3's 2008 containers do not keep to that.
+  const bool v2005 = (firma & ~1u) == 0x102A0E00;
+  Exigir(virtuales >= 24 && fisicos && (!v2005 || !(fisicos % 12)) &&
              uint64_t(virtuales) + fisicos == s.original.size(),
          "Longitudes del contenedor incoherentes");
   s.vertices = (firma & 1) != 0;

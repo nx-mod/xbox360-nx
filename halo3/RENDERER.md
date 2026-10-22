@@ -35,6 +35,31 @@ Version `0x11` is the layout upstream XenosRecomp was written for (Sonic Unleash
 (`0E`) is the odd one that needed `shaders/nfsmw_contenedor.h`. Many containers repeat across maps, so dedupe by hash.
 `maps/mainmenu.map` and `maps/shared.map` are the first to cover.
 
+## Shader library status (2026-10-22)
+
+Built locally from `mainmenu.map` and `010_jungle.map` (`shared.map` has no containers): 1,127 distinct containers,
+1,105 to valid SPIR-V, packed into `halo3_shaders_dk.nfsp` (3.1 MB, not shipped). The chain, all on the phone:
+
+1. `shaders/x360_buscar_contenedores 11 <out> <maps>`: Halo's containers have **no constant table** (offset 0).
+2. `halo3/tools/halo3_hlsl` (XenosRecomp with `NFSMW_RECOMP` + `HALO3_RECOMP`), one container per process under
+   `ulimit -v 1 GB` and a timeout: a synthetic table (`g_c` 256 registers, `g_b0..15`).
+3. `shaders/wasm/dxc_node.mjs --sin-invertir-y --seguir -D NFSMW_DEKO3D -D HALO3_RECOMP`, then `spirv-val`.
+4. `halo3/tools/halo3_empaquetar`.
+
+What `HALO3_RECOMP` does that the runtime must match:
+
+- **Samplers:** only the slots the fetches use, at texture/sampler binding = slot (0-31, no shadow pair), with each
+  fetch's dimension (1D reads a 2D texture of height 1). The runtime gets them from SPIR-V reflection, not a table.
+- **Vertex fetches with no element** (most pixel shaders, some vertex streams): `ByteAddressBuffer g_vf<slot>` in
+  set 5, bindings 0.. in slot order. The renderer copies the fetch constant's range (byte-swapped as vertex data)
+  and binds it as a storage buffer.
+- **Booleans and loop constants:** UBO binding 3 (`b[2]` = 256 booleans, then `bucles[8]` = 32 loop constants).
+- **Vertex inputs:** location = order of first appearance in the element list (`ubicaciones_por_orden`).
+- **Constants:** 256 for pixel shaders too (the pixel UBO must be 256 registers).
+- Undefined opcodes (scalar 41, 51-63; vector 30, 31) are no-ops, marked in the HLSL.
+
+Still refused (22): leftover braces, vertex-shader samples outside the helpers, a few broken lines.
+
 ## Steps
 
 1. **Halo shader library.** Scan the maps for `10 2A 11` containers (the scanner, `shaders/nfsmw_buscar_contenedores.cpp`

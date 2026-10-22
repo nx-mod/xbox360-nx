@@ -638,6 +638,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
                 case AluVectorOpcode::SetpGePush:
                     mask = 0b1000;
                     break;
+                // DST reads y, z of src0 and y, w of src1 whatever the write mask: full vectors, then the written
+                // components of the result (below).
+                case AluVectorOpcode::Dst:
+                    mask = 0b1111;
+                    break;
 #endif
 
                 default:
@@ -952,8 +957,18 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluVectorOpcode::Dst:
+#ifdef HALO3_RECOMP
+        {
+            print("dst({}, {}).", op(VECTOR_0), op(VECTOR_1));
+            for (size_t i = 0; i < 4; i++)
+                if ((vectorWriteMask >> i) & 0x1)
+                    out += SWIZZLES[i];
+            break;
+        }
+#else
             print("dst({}, {})", op(VECTOR_0), op(VECTOR_1));
             break;
+#endif
 #ifdef HALO3_RECOMP
         default:  // an opcode with no translation: a name DXC reports, with its number
             print("halo_op_vector_{}", uint32_t(instr.vectorOpcode));
@@ -970,7 +985,8 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 #ifdef HALO3_RECOMP
     // Scalar opcodes past 50 (RETAIN_PREV) are not defined; Halo 3's compiler leaves them in instructions whose
     // scalar half does nothing. They keep ps, as RETAIN_PREV.
-    if (instr.scalarOpcode != AluScalarOpcode::RetainPrev && uint32_t(instr.scalarOpcode) <= 50)
+    if (instr.scalarOpcode != AluScalarOpcode::RetainPrev && uint32_t(instr.scalarOpcode) <= 50 &&
+        uint32_t(instr.scalarOpcode) != 41)  // 41 is the gap between SQRT and MULSC0
 #else
     if (instr.scalarOpcode != AluScalarOpcode::RetainPrev)
 #endif
@@ -2372,8 +2388,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 : dimension == uint32_t(TextureDimension::TextureCube) ? "Cube" : "2D";
             declaraciones += fmt::format("[[vk::binding({0}, 0)]] Texture{1}<float4> s{0}_Textura;\n", slot, nombre);
             declaraciones += fmt::format("[[vk::binding({0}, 1)]] SamplerState s{0}_Muestreo;\n", slot);
-            declaraciones += fmt::format("#define s{0}_Texture{1}DescriptorIndex s{0}_Textura\n", slot,
-                dimension == uint32_t(TextureDimension::Texture1D) ? "1D" : nombre);
+            declaraciones += fmt::format("#define s{0}_Texture{1}DescriptorIndex s{0}_Textura\n", slot, nombre);
+            if (strcmp(nombre, "2D") == 0)  // the same slot may also be fetched as 1D (a 2D texture of height 1)
+                declaraciones += fmt::format("#define s{0}_Texture1DDescriptorIndex s{0}_Textura\n", slot);
             declaraciones += fmt::format("#define s{0}_SamplerDescriptorIndex s{0}_Muestreo\n", slot);
             if (slot < 16)
                 declaraciones += fmt::format("#define s{0}_InvTamano float2(NFSMW_COMPARTIDA_FLOAT({1}), NFSMW_COMPARTIDA_FLOAT({2}))\n",
