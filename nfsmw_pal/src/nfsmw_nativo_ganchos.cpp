@@ -11,6 +11,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+
+#include <xxhash.h>
+
+#if REX_PLATFORM_SWITCH
+extern "C" const char* RexSwitchLogDir(void);  // the rexglue log folder, ending in '/'
+#endif
 #include <mutex>
 #include <span>
 #include <unordered_map>
@@ -204,13 +211,42 @@ const EntradaShader* IdentificarCreacion(const uint8_t* base, uint32_t direccion
   }
   const uint8_t* p = base + direccion;
   if (LeerBE(p) != (vertices ? 0x102A0E01u : 0x102A0E00u)) {
+#if REX_PLATFORM_SWITCH
+    // Another container version (a newer compiler): the library cannot have it. Said once per signature.
+    static std::atomic<uint32_t> firma_avisada{0};
+    const uint32_t firma = LeerBE(p);
+    if ((firma >> 16) == 0x102A && firma_avisada.exchange(firma, std::memory_order_relaxed) != firma) {
+      std::fprintf(stderr, "[shader desconocido] %s con firma %08X (la biblioteca es de 102A0E0x)\n",
+                   vertices ? "vertex" : "pixel", firma);
+    }
+#endif
     return nullptr;
   }
   const uint64_t total = uint64_t(LeerBE(p + 4)) + LeerBE(p + 8);
   if (total < 24 || total > 65536 || uint64_t(direccion) + total > (uint64_t(1) << 32)) {
     return nullptr;
   }
-  return shaders->IdentificarContenedor(std::span<const uint8_t>(p, size_t(total)));
+  const EntradaShader* e = shaders->IdentificarContenedor(std::span<const uint8_t>(p, size_t(total)));
+#if REX_PLATFORM_SWITCH
+  // A shader the game creates that the library does not have: its draws are never made. Said on stderr (it survives
+  // closing the game) and the container is saved to logs/rex/ to translate it (16 at most).
+  if (!e) {
+    static std::atomic<int> volcados{0};
+    if (volcados.fetch_add(1, std::memory_order_relaxed) < 16) {
+      const uint64_t huella = XXH3_64bits(p, size_t(total));
+      std::fprintf(stderr, "[shader desconocido] %s, %llu bytes, huella %016llX\n", vertices ? "vertex" : "pixel",
+                   static_cast<unsigned long long>(total), static_cast<unsigned long long>(huella));
+      char ruta[512];
+      std::snprintf(ruta, sizeof(ruta), "%sshader_desconocido_%c_%016llX.bin", RexSwitchLogDir(), vertices ? 'v' : 'p',
+                    static_cast<unsigned long long>(huella));
+      if (FILE* f = std::fopen(ruta, "wb")) {
+        std::fwrite(p, 1, size_t(total), f);
+        std::fclose(f);
+      }
+    }
+  }
+#endif
+  return e;
 }
 
 void RecordarCreacion(uint32_t objeto, const EntradaShader* entrada, bool vertices) {

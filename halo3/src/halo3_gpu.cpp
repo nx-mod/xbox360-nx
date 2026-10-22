@@ -21,6 +21,7 @@
 // forever for a GPU that never reads its commands.
 
 #include "halo3_gpu.h"
+#include "halo3_shaders.h"
 
 #include <algorithm>
 #include <atomic>
@@ -50,6 +51,7 @@
 #include <rex/ui/presenter.h>
 #include <rex/ui/windowed_app_context.h>
 
+#include <rex/filesystem.h>
 #if HALO3_DEKO3D
 #include <rex/ui/deko3d/presentador.h>
 #include <rex/x360/deko/destinos.h>
@@ -353,7 +355,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     destinos_ = rex::x360::CrearDestinosDeko3d(
         static_cast<rex::deko3d::ProveedorDeko3d*>(provider_.get()), memory_);
     if (destinos_) {
-      REXLOG_INFO("[gpu] deko3d renderer backend up (no geometry decoded yet; present path live)");
+      REXLOG_INFO("[gpu] deko3d renderer backend up");
+      // The translated shaders (halo3/tools, built from the maps; not shipped) next to the NRO.
+      const auto biblioteca = rex::filesystem::GetExecutableFolder() / "halo3_shaders_dk.nfsp";
+      if (shaders_.Cargar(biblioteca)) {
+        std::fprintf(stderr, "[gpu] shader library: %zu shaders\n", shaders_.Cantidad());
+      } else {
+        std::fprintf(stderr, "[gpu] no shader library at %s: geometry is not drawn\n", biblioteca.string().c_str());
+      }
     }
     return destinos_ != nullptr;
   }
@@ -539,10 +548,15 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         counter_.fetch_add(1, std::memory_order_relaxed);
         // DIAG (why resueltas=0): to stderr so it survives a crash. Shows whether the game issues copy-mode
         // draws (resolves) at all, or draws without ever resolving. First swaps only.
-        if (swaps_ <= 48) {
-          std::fprintf(stderr, "[gpu] swap#%llu draws=%llu copias=%llu packets=%llu\n",
+        if (swaps_ <= 48 || (swaps_ % 300) == 0) {
+          const halo3::EstadisticasShaders e = shaders_.Estadisticas();
+          std::fprintf(stderr,
+                       "[gpu] swap#%llu draws=%llu copias=%llu dibujados=%llu sin_shaders=%llu | shaders: %llu distintos, "
+                       "%llu identificados (%llu aproximados), %llu sin identificar\n",
                        (unsigned long long)swaps_, (unsigned long long)draws_, (unsigned long long)copias_,
-                       (unsigned long long)packets_);
+                       (unsigned long long)dibujados_, (unsigned long long)sin_shaders_,
+                       (unsigned long long)e.distintos, (unsigned long long)e.identificados,
+                       (unsigned long long)e.aproximados, (unsigned long long)e.sin_identificar);
         }
         if (EnsureRenderer()) {
           destinos_->Presentar(presenter_.get(), rex::x360::LeerTexturaSwap(registers_.data()), 1280, 720);
@@ -748,18 +762,81 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         break;
       }
       case xenos::PM4_DRAW_INDX:
-      case xenos::PM4_DRAW_INDX_2:
+      case xenos::PM4_DRAW_INDX_2: {
         ++draws_;
-        // A copy-mode draw is a resolve/clear and needs no shaders: route it to the renderer so the EDRAM is
-        // resolved to its target (the first thing that can appear on screen). Geometry draws still only count
-        // until the ring decoder builds PeticionDibujo for them.
-        if (EnsureRenderer() && rex::x360::EsCopia(registers_.data())) {
-          ++copias_;  // DIAG: copy-mode draws (resolves) seen
+        // As NFS's sink (nfsmw_nativo_sistema.cpp): DRAW_INDX starts with the visibility query word; the initiator
+        // and, for indices in a buffer, their base and size go to their registers, where the renderer reads them.
+        const uint32_t skip = opcode == xenos::PM4_DRAW_INDX ? 1 : 0;
+        if (count < skip + 1) break;
+        if (skip) data.Read();
+        const uint32_t initiator = data.Read();
+        WriteRegister(rex::graphics::XE_GPU_REG_VGT_DRAW_INITIATOR, initiator);
+        if (((initiator >> 6) & 0x3) == uint32_t(xenos::SourceSelect::kDMA)) {
+          if (count < skip + 3) break;
+          WriteRegister(rex::graphics::XE_GPU_REG_VGT_DMA_BASE, data.Read());
+          WriteRegister(rex::graphics::XE_GPU_REG_VGT_DMA_SIZE, data.Read());
+        }
+        if (!EnsureRenderer()) break;
+        if (rex::x360::EsCopia(registers_.data())) {
+          // A copy-mode draw is a resolve and/or a clear.
+          ++copias_;
           destinos_->Copiar(rex::x360::LeerRegistrosCopia(registers_.data()));
+          break;
+        }
+        // In depth-only mode (5) the vertex shader is enough.
+        const bool solo_profundidad = (Register(rex::graphics::XE_GPU_REG_RB_MODECONTROL) & 0x7) == 5;
+        if (vs_actual_ && (ps_actual_ || solo_profundidad)) {
+          rex::x360::PeticionDibujo peticion;
+          peticion.registros = registers_.data();
+          peticion.vs = vs_actual_;
+          peticion.ps = solo_profundidad ? nullptr : ps_actual_;
+          peticion.vs_microcodigo = vs_microcodigo_;
+          peticion.generacion_vs = generacion_vs_;
+          // A new generation for everything on every draw: the renderer recomputes what it caches. Correct
+          // before fast; the change tracking NFS has comes once there is a picture.
+          ++generacion_;
+          peticion.generacion_constantes_vs = generacion_;
+          peticion.generacion_constantes_ps = generacion_;
+          peticion.generacion_fetch = generacion_;
+          peticion.generacion_encuadre = generacion_;
+          if (destinos_->Dibujar(peticion)) {
+            ++dibujados_;
+          }
+        } else {
+          ++sin_shaders_;
         }
         break;
+      }
+      case xenos::PM4_IM_LOAD: {
+        // Microcode in GPU memory; the type (0 vertex, 1 pixel) is in the two low bits of the address.
+        if (count < 2) break;
+        const uint32_t address_type = data.Read();
+        const uint32_t size = data.Read() & 0xFFFF;
+        const uint8_t* source = memory_->TranslatePhysical(address_type & ~uint32_t(0x3));
+        std::vector<uint32_t>& microcode = (address_type & 0x3) == 0 ? vs_microcodigo_ : ps_microcodigo_;
+        microcode.resize(size);
+        for (uint32_t i = 0; i < size; ++i) {
+          microcode[i] = rex::memory::load_and_swap<uint32_t>(source + size_t(i) * 4);
+        }
+        Identify(address_type & 0x3);
+        break;
+      }
+      case xenos::PM4_IM_LOAD_IMMEDIATE: {
+        // Microcode inside the packet itself.
+        if (count < 2) break;
+        const uint32_t type = data.Read();
+        const uint32_t size = data.Read() & 0xFFFF;
+        if (size > count - 2) break;
+        std::vector<uint32_t>& microcode = (type & 0x3) == 0 ? vs_microcodigo_ : ps_microcodigo_;
+        microcode.resize(size);
+        for (uint32_t i = 0; i < size; ++i) {
+          microcode[i] = data.Read();
+        }
+        Identify(type & 0x3);
+        break;
+      }
       default:
-        // IM_LOAD, IM_LOAD_IMMEDIATE, INVALIDATE_STATE, NOP...: nothing the game waits for.
+        // INVALIDATE_STATE, NOP...: nothing the game waits for.
         break;
     }
   }
@@ -792,6 +869,25 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   std::atomic<bool> active_{false};
 
   std::vector<uint32_t> registers_;
+  // The shaders of the next draw: the microcode of the last IM_LOAD of each type and its library entry.
+  halo3::ShadersHalo shaders_;
+  std::vector<uint32_t> vs_microcodigo_, ps_microcodigo_;
+  const rex::x360::EntradaShader* vs_actual_ = nullptr;
+  const rex::x360::EntradaShader* ps_actual_ = nullptr;
+  uint64_t generacion_vs_ = 0, generacion_ = 0;
+  uint64_t dibujados_ = 0, sin_shaders_ = 0;
+
+  void Identify(uint32_t type) {
+    if (type > 1 || !shaders_.cargada()) {
+      return;
+    }
+    if (type == 0) {
+      vs_actual_ = shaders_.Identificar(true, vs_microcodigo_);
+      ++generacion_vs_;
+    } else {
+      ps_actual_ = shaders_.Identificar(false, ps_microcodigo_);
+    }
+  }
   uint64_t bin_mask_ = ~uint64_t(0);
   uint64_t bin_select_ = ~uint64_t(0);
 

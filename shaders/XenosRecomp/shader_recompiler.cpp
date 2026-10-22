@@ -133,6 +133,13 @@ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
     , { DeclUsage::Color, 4 }
     , { DeclUsage::Color, 5 }
 #endif
+#ifdef HALO3_RECOMP
+    // Halo 3's pixel shaders also read these. Both stages declare from this one list, in this order, so the
+    // implicit locations agree.
+    , { DeclUsage::Normal, 0 }
+    , { DeclUsage::Tangent, 0 }
+    , { DeclUsage::Binormal, 0 }
+#endif
 };
 
 static constexpr std::string_view TEXTURE_DIMENSIONS[] = 
@@ -1259,7 +1266,12 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
         out += " = ps;\n";
     }
 
+#ifdef HALO3_RECOMP
+    // An export to a target with no name here (the point size / edge flag one): its constant writes go nowhere.
+    if (instr.exportData && !exportRegister.empty())
+#else
     if (instr.exportData)
+#endif
     {
         uint32_t zeroMask = instr.scalarDestRelative ? (0b1111 & ~(instr.vectorWriteMask | instr.scalarWriteMask)) : 0;
         uint32_t oneMask = instr.vectorWriteMask & instr.scalarWriteMask;
@@ -1979,6 +1991,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 {
                     for (uint32_t i = 0; i < findResult->second; i++)
                     {
+#ifdef HALO3_RECOMP
+                        // Never main's own brace: a label whose block was not opened in this form closes nothing.
+                        if (indentation <= 1)
+                            break;
+#endif
                         --indentation;
                         indent();
                         out += "}\n";

@@ -14,6 +14,8 @@ include(generated/rexglue.cmake)
 set(HALO3_SOURCES
     src/main.cpp
     src/halo3_gpu.cpp
+    src/halo3_shaders.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../nfsmw_pal/src/nfsmw_shader_library.cpp  # the library file format
     src/halo3_hooks.cpp
 )
 

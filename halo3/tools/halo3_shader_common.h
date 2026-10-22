@@ -24,7 +24,7 @@ float4 getWeights2D(Texture2D<float4> texture, SamplerState samplerState, float2
 }
 // 1D fetches read a 2D texture of height 1.
 float4 tfetch1D(Texture2D<float4> texture, SamplerState samplerState, float texCoord) {
-  return texture.Sample(samplerState, float2(texCoord, 0.5));
+  return NFSMW_SAMPLE(texture, samplerState, float2(texCoord, 0.5));
 }
 float4 getWeights1D(Texture2D<float4> texture, SamplerState samplerState, float texCoord) {
   uint w, h;
