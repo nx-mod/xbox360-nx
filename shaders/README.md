@@ -24,8 +24,34 @@ containers, translate the microcode to [HLSL](../docs/glossary.md#hlsl), compile
 | `nfsmw_lzx.cpp` | LZX decompression of the executable image (with libmspack), done the same way as the runtime does it. |
 | `nfsmw_probar_contenedor.cpp`, `nfsmw_probar_biblioteca.cpp` ("test container", "test library") | Regression checks of the container reader and of a built library. |
 | `nfsmw_regenerar_biblioteca_pcf.sh` ("regenerate library") | The whole pipeline on the PC: translate, rewrite the shadow and blur paths, compile with DXC, validate, pack. |
+| `nfsmw_biblioteca_dk_linux.sh` ("deko3d library, Linux") | The deko3d library (`nfsmw_shaders_dk.nfsp`) of one edition straight from its ISO, on Linux with no native DXC (works on ARM64, e.g. the dev phone). See below. |
 | `pch_min.h` | Precompiled header of the translator build. |
-| `wasm/` | The WebAssembly builds (programs compiled to run in a browser) used by the installer page: `build_wasm_tools.bat` and `link_dxc_wasm.bat` build them, and `dxc_web.cpp` is the entry point of DXC in the browser. |
+| `wasm/` | The WebAssembly builds (programs compiled to run in a browser) used by the installer page: `build_wasm_tools.bat` and `link_dxc_wasm.bat` build them, and `dxc_web.cpp` is the entry point of DXC in the browser. `dxc_node.mjs` runs that same DXC from Node over a folder of HLSL. |
+
+## The deko3d library without native DXC
+
+DXC has no Linux ARM64 build, and building it needs far more memory than a phone has. The installer page already
+ships DXC as WebAssembly. Its fixed arguments (in `wasm/dxc_web.cpp`) are the Vulkan set, so vertex shaders get
+`-fvk-invert-y`; deko3d must not have it (its clip-space y points up). With it, the image is upside down and every 3D
+triangle is culled, since flipping y flips the winding. `wasm/dxc_node.mjs --sin-invertir-y` drops the flag from a
+patched temporary copy of the module (it ignores `wasmBinary`, so the copy sits beside a copy of its `.mjs`). So `nfsmw_biblioteca_dk_linux.sh` builds this repository's translator and packer with g++, takes the
+containers out of the ISO with the installer's scanner, applies the shadow and blur rewrites copied verbatim from
+`nfsmw_regenerar_biblioteca_pcf.sh`, compiles every shader with `wasm/dxc_node.mjs` (`-DNFSMW_DEKO3D` goes in as a
+`#define`), validates with `spirv-val` and packs:
+
+```sh
+INSTALADOR=~/switch/x360-deps/nfsmw-nx-installer \
+  shaders/nfsmw_biblioteca_dk_linux.sh out/biblioteca_dk_es "Need for Speed - Most Wanted (Spain).iso"
+```
+
+The translator must be this repository's: the installer's `shader_common.h` has no `NFSMW_DEKO3D` branches. The
+composition-blur rewrite targets the final composition shader, which the reference script names `p_000139` (its PAL
+Spanish name; USA has it as `p_000140`), so the driver finds it by its container's SHA-256 instead (`BLUR_SHA`, the
+installer manifest's `blur_container_sha256`). Each
+edition needs its own library (some shader fingerprints differ between editions). On the phone it is a heavy job:
+`heavy-preflight` first, then run it nice'd and detached. Do not cap it with `ulimit -v`: Node reserves several GB of
+address space for WebAssembly, and under the cap the XEX decryption's `malloc` fails at once. Watch real memory
+instead. A good run finds 207 containers for PAL Spanish.
 
 The installer page runs the same steps in the browser (`lib/shaders.js` in the
 [installer's repository](https://github.com/StevensND/nfsmw-nx-installer)). It checks that the result has the
