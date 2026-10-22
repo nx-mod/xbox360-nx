@@ -6,6 +6,8 @@
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
+#include <rex/filesystem/disc_image_extract.h>
+#include <rex/filesystem/first_launch.h>
 #include <rex/logging.h>
 #include <rex/rex_app.h>
 #include <rex/ui/overlay/debug_overlay.h>
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <map>  // HANG WATCHDOG - the signature is sorted by thread id
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -89,6 +92,8 @@ class NfsmwApp : public rex::ReXApp {
   //    1. an .iso whose name matches the executable's
   //    2. any other .iso in the folder, in alphabetical order
   //    3. a game_root\ folder, in case someone prefers to extract it
+  //  On the Switch an .iso cannot be read in place: the first start copies it
+  //  into game_root/ (rex/filesystem/first_launch.h) and game_root/ is used.
   //
   //  (1) exists so that a folder with NFS_Most_Wanted.exe and
   //  NFS_Most_Wanted.iso works unambiguously even if there are more images.
@@ -140,6 +145,26 @@ class NfsmwApp : public rex::ReXApp {
     if (carpeta.empty() || !std::filesystem::is_directory(carpeta, ec)) {
       return;
     }
+
+#if REX_PLATFORM_SWITCH
+    // On the Switch an .iso cannot be read in place (the disc reader maps the whole image, and 7 GB does not
+    // fit). The first start copies an .iso placed next to the NRO into game_root/ (rex/filesystem/first_launch.h),
+    // with its progress on screen; every start after that uses the copy.
+    {
+      static constexpr std::string_view kSaltar[] = {"$SystemUpdate"};
+      const rex::filesystem::first_launch::Options opciones{"NEED FOR SPEED: MOST WANTED", "game_root", kSaltar};
+      if (auto copia = rex::filesystem::first_launch::ExtractIfNeeded(carpeta, opciones); !copia.empty()) {
+        paths.game_data_root = copia;
+        return;
+      }
+      const auto extraida = carpeta / "game_root";
+      if (std::filesystem::is_regular_file(extraida / "default.xex", ec) &&
+          !rex::filesystem::DiscExtractionUnfinished(extraida)) {
+        paths.game_data_root = extraida;
+      }
+      return;
+    }
+#endif
 
     // The executable's name, for the preferred case.
     std::filesystem::path preferida;
@@ -215,6 +240,10 @@ class NfsmwApp : public rex::ReXApp {
   //                          before a single frame has been drawn.
   // ==========================================================================
   void OnPostInitLogging() override {
+    // The first-launch copy of the .iso happens before logging starts; its result goes to the log here.
+    if (!rex::filesystem::first_launch::Summary().empty()) {
+      REXLOG_INFO("[primer arranque] {}", rex::filesystem::first_launch::Summary());
+    }
     // Mesa/NVK environment variables (nfsmw_mesa_entorno): the toml has already been read and Vulkan is
     // created later, in SetupPresentation.
     nfsmw::entorno::AplicarEntornoMesa();

@@ -7,15 +7,16 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
 #include <rex/filesystem.h>
 #include <rex/rex_app.h>
 
-#include "halo3_first_launch.h"
 #include "halo3_gpu.h"
 #include <rex/filesystem/disc_image_extract.h>
+#include <rex/filesystem/first_launch.h>
 #include <rex/logging.h>
 
 class Halo3App : public rex::ReXApp {
@@ -39,7 +40,7 @@ class Halo3App : public rex::ReXApp {
   // The game's files, when --game_data_root is not given. Searched next to the
   // executable, in this order:
   //   1. on the Switch, an .iso there and no complete game/ folder: the disc is copied into game/ first
-  //      (halo3_first_launch.cpp; the Switch cannot read a 7 GB image in place)
+  //      (rex/filesystem/first_launch.h; the Switch cannot read a 7 GB image in place)
   //   2. a game_root/ or game/ folder with the extracted disc (sdmc:/halo3-nx/game/ on the Switch).
   //      Before the folder itself: the old port left a lone default.xex beside its NRO, without the maps.
   //      A game/ whose copy has not finished (game/.extracting) does not count.
@@ -57,7 +58,9 @@ class Halo3App : public rex::ReXApp {
       return;
     }
 #if REX_PLATFORM_SWITCH
-    if (auto extracted = halo3::first_launch::ExtractIfNeeded(folder); !extracted.empty()) {
+    static constexpr std::string_view kSkip[] = {"$SystemUpdate"};
+    const rex::filesystem::first_launch::Options first_launch{"HALO 3", "game", kSkip};
+    if (auto extracted = rex::filesystem::first_launch::ExtractIfNeeded(folder, first_launch); !extracted.empty()) {
       paths.game_data_root = extracted;
       return;
     }
@@ -87,8 +90,8 @@ class Halo3App : public rex::ReXApp {
 
   // The first-launch copy happens before logging starts; its result goes to the log here.
   void OnPostInitLogging() override {
-    if (!halo3::first_launch::Summary().empty()) {
-      REXLOG_INFO("[first launch] {}", halo3::first_launch::Summary());
+    if (!rex::filesystem::first_launch::Summary().empty()) {
+      REXLOG_INFO("[first launch] {}", rex::filesystem::first_launch::Summary());
     }
   }
 };
