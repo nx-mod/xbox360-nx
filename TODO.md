@@ -29,9 +29,19 @@
 
 ## Halo 3
 
-- A picture: the plan is in [halo3/RENDERER.md](halo3/RENDERER.md) (shader library from the maps, the draw path
-  moved into the SDK, 2_10_10_10 render targets).
+- A picture: the plan and the state are in [halo3/RENDERER.md](halo3/RENDERER.md). Open: the screen never clears
+  (Halo clears with D3D's own full-screen draws), translated vertex shaders are slow (structured loops, off), the
+  exposure chain's 16-bit targets. 2026-10-26 on the console: the intro movie shows, the menu is black but for a very
+  faint Halo logo.
 - Static in the audio.
+
+## Next game
+
+Pick the next game for this repo. Call of Duty 4 has no ReXGlue port anywhere (2026-10-26); a new recomp needs the
+Xbox 360 disc. ReXGlue games already on the Switch, to learn from or to avoid duplicating: Sonic Adventure 2 (sa2-nx),
+Mass Effect, The Simpsons Game, Torchlight, Dead Space 2 and 3 (VasilkovND), Metal Gear Rising (tuancapoo/mgr-nx-deko),
+Naruto: Rise of a Ninja (malinkin-s). Several draw with the shared reNut renderer on deko3d: read it before more
+renderer work here.
 
 ## SDK
 
