@@ -8,10 +8,17 @@
 #  Loose keys (cr_as_local and the like) must go above the first [table]:
 #  in TOML a loose key belongs to the last table opened.
 #
-#  Performance keys (cr_as_local, non_volatile_as_local, xer_as_local,
-#  ctr_as_local) are off until each is checked against Halo 3's code:
-#  non_volatile_as_local breaks code that relies on setjmp/longjmp.
 # ============================================================================
+
+# Registers as C++ locals (docs/toolchain.md): the compiler keeps cr, xer, ctr and r14-r31 in the Switch's own
+# registers, and the calls to __savegprlr_N/__restgprlr_N (in every prologue and epilogue) are dropped. The pieces
+# that read registers their owner set up are marked share_registers in [functions] below.
+# setjmp (sub_826F3AF0, six callers in the XDK's libraries) then saves zeros; its longjmp returns to its caller
+# instead of to the setjmp in recompiled code anyway.
+cr_as_local = true
+non_volatile_as_local = true
+xer_as_local = true
+ctr_as_local = true
 
 [functions]
 # Reached only by a tail call (a plain `b`), which the analysis does not follow into a new function.
@@ -20,6 +27,188 @@
 "0x826C5118" = {}   # from b at 0x826C49F4
 "0x8258BDA0" = {}   # from b at 0x8258C094 (8 bytes into 0x8258BD98)
 "0x825A2180" = {}   # from b at 0x8259FE40 (16 bytes into 0x825A2170): SwitchToFiber's body, unused once hooked ([rexcrt])
+
+
+# Pieces that read registers (r14-r31, f14-f31, cr, ctr, xer) before writing them: with those registers as
+# locals they would read zeros. Found by a lee_antes.py-style pass over the generated code (false alarms dropped:
+# mfcr saves, a prologue's stores, vcmp. writes). Run it again after a codegen that changes them.
+# Reached only by a tail jump (b, bctr) from the function that set the registers up:
+"0x82205D9C" = { share_registers = true }   # r31
+"0x82205DA0" = { share_registers = true }   # r26 r31
+"0x82580F4C" = { share_registers = true }   # r31
+"0x82580F54" = { share_registers = true }   # r31
+"0x82580F68" = { share_registers = true }   # r31
+"0x82580F6C" = { share_registers = true }   # r31
+"0x8258D520" = { share_registers = true }   # r19 r20 r21 r23 r24 r25 r26 r27 r30 r31
+"0x8258D538" = { share_registers = true }   # r19 r20 r21 r23 r24 r25 r26 r27 r30 r31
+"0x8258D61C" = { share_registers = true }   # r19 r20 r21 r23 r24 r31
+"0x8258D624" = { share_registers = true }   # r19 r21 r23 r24 r31
+"0x825983E8" = { share_registers = true }   # r25 r26 r27 r28 r29 r31
+"0x82598490" = { share_registers = true }   # r31
+"0x825984C4" = { share_registers = true }   # r31
+"0x82598968" = { share_registers = true }   # r31
+"0x8259896C" = { share_registers = true }   # r31
+"0x8259919C" = { share_registers = true }   # r27 r28 r29 r30 r31
+"0x8259922C" = { share_registers = true }   # r31
+"0x826F5EE0" = { share_registers = true }   # r31
+"0x826F6154" = { share_registers = true }   # r31
+"0x826F6158" = { share_registers = true }   # r31
+"0x826F6270" = { share_registers = true }   # r31
+"0x826F63B4" = { share_registers = true }   # r31
+"0x826F63B8" = { share_registers = true }   # r31
+"0x826F64EC" = { share_registers = true }   # r31
+"0x826F64F0" = { share_registers = true }   # r31
+"0x826F6608" = { share_registers = true }   # r31
+"0x826F6754" = { share_registers = true }   # r31
+"0x826F6758" = { share_registers = true }   # r31
+"0x826F68AC" = { share_registers = true }   # r31
+"0x826F68B0" = { share_registers = true }   # r31
+"0x826F69E4" = { share_registers = true }   # r31
+"0x826F69E8" = { share_registers = true }   # r31
+"0x826F6B54" = { share_registers = true }   # r31
+"0x826F6B58" = { share_registers = true }   # r31
+"0x826F6C88" = { share_registers = true }   # r31
+"0x826F6C8C" = { share_registers = true }   # r31
+"0x826F6DC4" = { share_registers = true }   # r31
+"0x826F6DC8" = { share_registers = true }   # r31
+"0x826F6EE4" = { share_registers = true }   # r31
+"0x826F703C" = { share_registers = true }   # r31
+"0x826F7040" = { share_registers = true }   # r31
+"0x826F7198" = { share_registers = true }   # r31
+"0x826F719C" = { share_registers = true }   # r31
+"0x826F7460" = { share_registers = true }   # r31
+# Reached only through a pointer, a jump table or exception dispatch: an indirect call copies nothing back, so
+# keeping their registers in ctx is safe. Many start with words that are data; C++/SEH funclets read their
+# owner's frame. sub_82585098 (a loop) and setjmp are false alarms and stay unmarked.
+"0xvefpr_14" = { share_registers = true }   # f14 f15 f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 
+"0xvefpr_15" = { share_registers = true }   # f15 f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 
+"0xvefpr_16" = { share_registers = true }   # f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 
+"0xvefpr_17" = { share_registers = true }   # f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_18" = { share_registers = true }   # f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_19" = { share_registers = true }   # f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_20" = { share_registers = true }   # f20 f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_21" = { share_registers = true }   # f21 f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_22" = { share_registers = true }   # f22 f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_23" = { share_registers = true }   # f23 f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_24" = { share_registers = true }   # f24 f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_25" = { share_registers = true }   # f25 f26 f27 f28 f29 f30 f31
+"0xvefpr_26" = { share_registers = true }   # f26 f27 f28 f29 f30 f31
+"0xvefpr_27" = { share_registers = true }   # f27 f28 f29 f30 f31
+"0xvefpr_28" = { share_registers = true }   # f28 f29 f30 f31
+"0xvefpr_29" = { share_registers = true }   # f29 f30 f31
+"0xvefpr_30" = { share_registers = true }   # f30 f31
+"0xvefpr_31" = { share_registers = true }   # f31
+"0x821ABF18" = { share_registers = true }   # r26
+"0x821AC2A8" = { share_registers = true }   # r26
+"0x821B5FE0" = { share_registers = true }   # r16
+"0x82580C90" = { share_registers = true }   # r16
+"0x82582A90" = { share_registers = true }   # r16
+"0x82584840" = { share_registers = true }   # r31
+"0x8258A468" = { share_registers = true }   # r16
+"0x8258BCE0" = { share_registers = true }   # r16
+"0x8258D8F0" = { share_registers = true }   # r25
+"0x8258DAC0" = { share_registers = true }   # r25
+"0x8258DB40" = { share_registers = true }   # r25
+"0x8258DBB8" = { share_registers = true }   # r25
+"0x8258E650" = { share_registers = true }   # ctr
+"0x8258E808" = { share_registers = true }   # r16
+"0x82590228" = { share_registers = true }   # r16
+"0x825903C8" = { share_registers = true }   # r16
+"0x825910A8" = { share_registers = true }   # r16
+"0x82591400" = { share_registers = true }   # r16
+"0x82592578" = { share_registers = true }   # r16
+"0x82592760" = { share_registers = true }   # r16
+"0x82592BD8" = { share_registers = true }   # r16
+"0x82593818" = { share_registers = true }   # r16
+"0x82593878" = { share_registers = true }   # r16
+"0x82595358" = { share_registers = true }   # r16
+"0x825957C8" = { share_registers = true }   # r16
+"0x82595E90" = { share_registers = true }   # r16
+"0x82595F30" = { share_registers = true }   # r16
+"0x82597CF0" = { share_registers = true }   # r16
+"0x82598350" = { share_registers = true }   # r16
+"0x825986F0" = { share_registers = true }   # r16
+"0x82598980" = { share_registers = true }   # r16
+"0x8259BF88" = { share_registers = true }   # r16
+"0x8259C344" = { share_registers = true }   # r25
+"0x825A18C0" = { share_registers = true }   # r30
+"0x825A1C50" = { share_registers = true }   # r30
+"0x825A2170" = { share_registers = true }   # f14 f15 f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27 f28 
+"0x826F41D0" = { share_registers = true }   # r16
+"0x826F4428" = { share_registers = true }   # r16
+"0x826F5370" = { share_registers = true }   # r16
+"0x826F5960" = { share_registers = true }   # r25
+"0x826F5ED8" = { share_registers = true }   # r31
+"0x826F5EE8" = { share_registers = true }   # r25
+"0x826F5F14" = { share_registers = true }   # r25
+"0x826F60D8" = { share_registers = true }   # r25
+"0x826F616C" = { share_registers = true }   # r25
+"0x826F61BC" = { share_registers = true }   # r25
+"0x826F6210" = { share_registers = true }   # r25
+"0x826F628C" = { share_registers = true }   # r25
+"0x826F62DC" = { share_registers = true }   # r25
+"0x826F6330" = { share_registers = true }   # r25
+"0x826F63CC" = { share_registers = true }   # r25
+"0x826F641C" = { share_registers = true }   # r25
+"0x826F6470" = { share_registers = true }   # r25
+"0x826F6504" = { share_registers = true }   # r25
+"0x826F6554" = { share_registers = true }   # r25
+"0x826F65A8" = { share_registers = true }   # r25
+"0x826F6624" = { share_registers = true }   # r25
+"0x826F6674" = { share_registers = true }   # r25
+"0x826F66C8" = { share_registers = true }   # r25
+"0x826F676C" = { share_registers = true }   # r25
+"0x826F67BC" = { share_registers = true }   # r25
+"0x826F6810" = { share_registers = true }   # r25
+"0x826F68C4" = { share_registers = true }   # r25
+"0x826F6914" = { share_registers = true }   # r25
+"0x826F6968" = { share_registers = true }   # r25
+"0x826F69FC" = { share_registers = true }   # r25
+"0x826F6A4C" = { share_registers = true }   # r25
+"0x826F6AA0" = { share_registers = true }   # r25
+"0x826F6B6C" = { share_registers = true }   # r25
+"0x826F6BBC" = { share_registers = true }   # r25
+"0x826F6C10" = { share_registers = true }   # r25
+"0x826F6CA0" = { share_registers = true }   # r25
+"0x826F6CF0" = { share_registers = true }   # r25
+"0x826F6D48" = { share_registers = true }   # r25
+"0x826F6DDC" = { share_registers = true }   # r25
+"0x826F6E2C" = { share_registers = true }   # r25
+"0x826F6E80" = { share_registers = true }   # r25
+"0x826F6F00" = { share_registers = true }   # r25
+"0x826F6F50" = { share_registers = true }   # r25
+"0x826F6FA8" = { share_registers = true }   # r25
+"0x826F7054" = { share_registers = true }   # r25
+"0x826F70A4" = { share_registers = true }   # r25
+"0x826F70F8" = { share_registers = true }   # r25
+"0x826F71B4" = { share_registers = true }   # r25
+"0x826F7204" = { share_registers = true }   # r25
+"0x826F7258" = { share_registers = true }   # r25
+"0x826F7470" = { share_registers = true }   # r25
+"0x826F749C" = { share_registers = true }   # r25
+"0x826F7870" = { share_registers = true }   # r25
+"0x826F8AB8" = { share_registers = true }   # r25
+"0x826F8F78" = { share_registers = true }   # r25
+"0x826F96B0" = { share_registers = true }   # r25
+"0x826FA140" = { share_registers = true }   # r25
+"0x826FA2C0" = { share_registers = true }   # r25
+"0x826FB068" = { share_registers = true }   # r25
+"0x826FB770" = { share_registers = true }   # r25
+"0x826FC0D0" = { share_registers = true }   # r25
+"0x826FC2B0" = { share_registers = true }   # r25
+"0x826FD770" = { share_registers = true }   # r25
+"0x826FD818" = { share_registers = true }   # r25
+"0x826FD898" = { share_registers = true }   # r25
+"0x826FDB90" = { share_registers = true }   # r25
+"0x826FDC40" = { share_registers = true }   # r25
+"0x826FE120" = { share_registers = true }   # r25
+"0x826FE198" = { share_registers = true }   # r25
+"0x826FE210" = { share_registers = true }   # r25
+"0x826FE288" = { share_registers = true }   # r25
+"0x826FE300" = { share_registers = true }   # r25
+"0x826FE378" = { share_registers = true }   # r25
+"0x826FF248" = { share_registers = true }   # r25
+"0x826FF2C0" = { share_registers = true }   # r25
 
 [rexcrt]
 # XAPI's fiber functions, linked into default.xex. Halo 3 runs work (map decompression) on fibers with their own

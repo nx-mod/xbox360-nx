@@ -248,6 +248,13 @@ critical path. Its stack samples, symbolized with the ELF of the same build (kee
   helpers the codegen had found; the codegen now keeps them, so `non_volatile_as_local` can drop their calls.
 - **No direct calls.** `tools/llamadas_directas.py` only looked for `nfsmw_recomp.*` files; Halo 3's 92,877 calls
   between functions without a hook now go straight to `__imp__sub_X` (see `docs/toolchain.md`).
+- **Registers as locals** (`cr_as_local`, `xer_as_local`, `ctr_as_local`, `non_volatile_as_local`, as NFS has
+  them). 174 pieces that read registers their owner set up are marked `share_registers` in `overrides.toml`: 44
+  reached only by a tail jump, 130 only through a pointer, a jump table or exception dispatch (many start with data
+  words; C++/SEH funclets). Found by reading the generated code for registers read before written (as
+  `tools/lee_antes.py` does, without its false alarms: mfcr saves, a prologue's stores, vcmp. writes). Two false
+  alarms are left unmarked: `sub_82585098` (a loop) and setjmp (`sub_826F3AF0`, whose longjmp never worked here).
+  Run the check again after any codegen that moves function bounds.
 - The `r17`/node-loop diagnostic hooks of boots 12-13 were removed: that crash was the read-fault storm, and
   `Halo3NodeLoopCheck` ran four heap lookups per animated node.
 
