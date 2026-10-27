@@ -16,6 +16,7 @@
 #include <rex/cvar.h>
 #include <rex/ui/deko3d/glsl.h>
 
+#include <cstdio>
 #include <exception>
 #include <string_view>
 
@@ -45,6 +46,21 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
   if (cuerpo.empty()) {
     error = "la traduccion no tiene main";
     return false;
+  }
+  // Diagnostic: a shader that exports to memory loses those writes here (shader_recompiler.cpp marks them). Its
+  // results then never reach what reads them: the frame's exposure, say.
+  if (const size_t m = cuerpo.find("MEMEXPORT"); m != std::string_view::npos) {
+    static uint32_t avisados = 0;
+    if (avisados < 40) {
+      ++avisados;
+      size_t n = 0;
+      for (size_t p = m; p != std::string_view::npos; p = cuerpo.find("MEMEXPORT", p + 1)) {
+        ++n;
+      }
+      std::fprintf(stderr, "[halo3] %s shader con exportacion a memoria: %zu escrituras perdidas, %zu palabras, huella %016llX\n",
+                   vertices ? "vertex" : "pixel", n, microcodigo.size(),
+                   (unsigned long long)XXH3_64bits(microcodigo.data(), microcodigo.size_bytes()));
+    }
   }
 
   const rex::deko3d::GlslDeko g = rex::deko3d::GlslDeTraductor(texto, vertices, 0);

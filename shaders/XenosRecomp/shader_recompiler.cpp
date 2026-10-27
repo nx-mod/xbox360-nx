@@ -771,6 +771,15 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     bool closeIfBracket = false;
 
     std::string_view exportRegister;
+#ifdef HALO3_RECOMP
+    // Memory export (eA = 32, eM0-eM4 = 33-37): a shader writing to memory, which this translator does not do. Marked
+    // so the game can say which shaders lose those writes (halo3_traductor.cpp).
+    if (instr.exportData && instr.vectorDest >= 32 && instr.vectorDest <= 37)
+    {
+        indent();
+        print("// MEMEXPORT e{}\n", uint32_t(instr.vectorDest));
+    }
+#endif
     if (instr.exportData)
     {
         if (isPixelShader)
