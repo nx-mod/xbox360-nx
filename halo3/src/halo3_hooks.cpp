@@ -23,6 +23,11 @@ void Halo3WorkerPollYield() {
   rex::thread::Sleep(std::chrono::microseconds(100));
 }
 
+// Direct3D's fence check (overrides.toml, 0x825A7F1C): once per poll while the GPU has not reached the fence.
+void Halo3FenceSpinYield() {
+  rex::thread::Sleep(std::chrono::microseconds(100));
+}
+
 // Diagnostics while the node-loop crash of boots 8-13 is chased (see overrides.toml and PORTING.md). sub_8231D8D0
 // builds each node's matrix with sub_82107DD8(r3 = parent matrix, r4 = orientation, r5 = output), where
 // r4 = r22 + 32 * node and r5 = r17 + 52 * node. r17 is set once, after the object lookup, as the object (r29) plus
