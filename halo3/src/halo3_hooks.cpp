@@ -28,6 +28,12 @@ void Halo3FenceSpinYield() {
   rex::thread::Sleep(std::chrono::microseconds(100));
 }
 
+// XAudio's spin barrier (overrides.toml, 0x826C62AC): a short sleep per wait, so the partner gets the core. Short
+// because the mixer meets there several times per 5.33 ms frame.
+void Halo3AudioBarrierYield() {
+  rex::thread::Sleep(std::chrono::microseconds(20));
+}
+
 // Diagnostics while the node-loop crash of boots 8-13 is chased (see overrides.toml and PORTING.md). sub_8231D8D0
 // builds each node's matrix with sub_82107DD8(r3 = parent matrix, r4 = orientation, r5 = output), where
 // r4 = r22 + 32 * node and r5 = r17 + 52 * node. r17 is set once, after the object lookup, as the object (r29) plus
