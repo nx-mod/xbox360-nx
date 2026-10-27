@@ -102,7 +102,7 @@ XENO_CND(xeno_cnd_gt, greaterThan)
 // ---- Constant blocks: the renderer's UBOs 0-3 (vertex, pixel, shared, Halo 3's booleans and loop constants)
 layout(std140, binding = 0) uniform NfsmwBloqueVs { vec4 v[256]; } g_UboVertex;
 layout(std140, binding = 1) uniform NfsmwBloquePs { vec4 v[256]; } g_UboPixel;
-layout(std140, binding = 2) uniform NfsmwBloqueCompartidas { vec4 v[31]; } g_UboCompartidas;
+layout(std140, binding = 2) uniform NfsmwBloqueCompartidas { vec4 v[32]; } g_UboCompartidas;
 layout(std140, binding = 3) uniform Halo3BooleanBlock { uvec4 b[2]; uvec4 bucles[8]; } g_Halo3Booleans;
 #define NFSMW_COMPARTIDA_UINT(B)  floatBitsToUint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
 #define NFSMW_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]

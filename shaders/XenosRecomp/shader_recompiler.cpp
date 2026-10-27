@@ -2698,6 +2698,20 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     indent();
                     out += '}';
                 #endif
+                #ifdef HALO3_RECOMP
+                    // The render target's exponent bias (RB_COLOR_INFO color_exp_bias): the Xenos scales what a pixel
+                    // shader writes by 2^bias, after the alpha test (which reads the unbiased alpha), as Xenia does.
+                    // Halo 3 writes its final image to 7e3 with a bias of 5 and copies it out with -5. The renderer
+                    // puts the four factors at shared bytes 496-508.
+                    {
+                        const uint32_t salidasPs = reinterpret_cast<const PixelShader*>(shader)->outputs;
+                        for (uint32_t c = 0; c < 4; ++c)
+                        {
+                            if (salidasPs & (PIXEL_SHADER_OUTPUT_COLOR0 << c))
+                                println("\toC{} *= NFSMW_COMPARTIDA_FLOAT({});", c, 496 + c * 4);
+                        }
+                    }
+                #endif
                 }
                 else
                 {

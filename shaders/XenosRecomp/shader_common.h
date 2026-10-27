@@ -108,7 +108,7 @@ struct NfsmwBloquePs { float4 v[224]; };
 // The 1/size pairs of the 16 sampler registers end at byte 360 + 16 * 8 = 488, past the 23 float4 below: NVK reads
 // beyond the declared array, Mesa's GLSL front end in uam rejects a constant index past it. 31 float4 = 496 bytes,
 // the size the deko3d renderer binds.
-struct NfsmwBloqueCompartidas { float4 v[31]; };
+struct NfsmwBloqueCompartidas { float4 v[32]; };
 #else
 struct NfsmwBloqueCompartidas { float4 v[23]; };
 #endif
