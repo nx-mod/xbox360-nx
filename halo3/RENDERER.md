@@ -137,3 +137,21 @@ audio crackles). With it on:
 - **First runs compile.** Translated shaders compile in the background (`deko_compilar_solo_en_fondo`) and their
   draws are skipped until ready; the DKSH cache on the SD makes later runs instant. Changing the translator's output
   invalidates it.
+
+## References: reNut's ports (2026-10-27)
+
+Facts only; no code is copied (reNut has no licence file). ReXGlue ports on deko3d that draw with reNut (masterspike52)
+hook the game's own Direct3D (device creation, the ring and fences, `Swap`, the four draws, `ClearF`, `Resolve`,
+shader registration) at fixed guest addresses instead of decoding the ring, as `halo3_gpu.cpp` does. A clear then
+arrives as a clear and a resolve with its format, the two places this renderer is stuck. Guides: sa2-nx
+`docs/deko3d-renderer-guide.md` (the census of a game's Direct3D, the device layout), malinkin-s's Naruto
+`docs/renut-retarget.md` (an XDK of Halo 3's era, 2.0.6274), Thorhax's deko3d case study.
+
+Checked against them:
+
+- **Maxwell clips a draw to the smallest bound target** (a depth target smaller than the colour target blanked
+  USF4's menu; Ryujinx does not show it). Not our case: `DestinoColor` and `DestinoProfundidad` size their images
+  the same way from the shared pitch, and a depth target is bound only when the draw tests depth or stencil.
+
+Next from them: Halo 3's Direct3D census (its XDK version from the XEX's static library list, the ~25 functions by
+address, the device's private offsets), useful whichever renderer stays.

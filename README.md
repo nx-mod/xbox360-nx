@@ -88,6 +88,11 @@ The steps are in [docs/building.md](docs/building.md).
 - **[haloce-nx](https://github.com/nx-mod/haloce-nx)** (CC0): the first-launch copy of the game out of a disc image.
 - **[summers-aaron](https://github.com/summers-aaron/xenon-pc-comp)**: xenon-pc-comp, Halo 3 on ReXGlue for Linux.
   Used as a reference for what Halo 3 needs; none of its code is copied.
+- **[masterspike52](https://github.com/masterspike52/reNut)**'s reNut, the Direct3D-level renderer, and the ports
+  that brought it to deko3d: **[ChanseyIsTheBest](https://github.com/ChanseyIsTheBest/sa2-nx)** (sa2-nx and its
+  deko3d renderer guide), **[malinkin-s](https://github.com/malinkin-s/naruto-rise-of-a-ninja-nx)** (Naruto: Rise
+  of a Ninja, an XDK of Halo 3's era) and **[Thorhax](https://github.com/Thorhax/Thorhax-deko3d-reference)** (the
+  deko3d case study). Used as references for Halo 3's renderer and the console's traps; none of their code is copied.
 - **[hedge-dev](https://github.com/hedge-dev/XenosRecomp)**: XenosRecomp.
 - **[danfromtico](https://github.com/danfromtico/mesa-switch)** and **[NaGaa95](https://github.com/NaGaa95/mesa-switch)**:
   mesa-switch.
