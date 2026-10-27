@@ -37,8 +37,8 @@
 
 ## Next game
 
-Pick the next game for this repo. Call of Duty 4 has no ReXGlue port anywhere (2026-10-26); a new recomp needs the
-Xbox 360 disc. ReXGlue games already on the Switch, to learn from or to avoid duplicating: Sonic Adventure 2 (sa2-nx),
+Pick the next game for this repo. Call of Duty 4 is dropped (2026-10-27: no ReXGlue port anywhere; the user's next
+port is a native Source engine port, outside this repo). ReXGlue games already on the Switch, to learn from or to avoid duplicating: Sonic Adventure 2 (sa2-nx),
 Mass Effect, The Simpsons Game, Torchlight, Dead Space 2 and 3 (VasilkovND), Metal Gear Rising (tuancapoo/mgr-nx-deko),
 Naruto: Rise of a Ninja (malinkin-s). Several draw with the shared reNut renderer on deko3d: read it before more
 renderer work here.
