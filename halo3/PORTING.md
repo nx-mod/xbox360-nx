@@ -229,6 +229,28 @@ and these titles use no write-watch. This is "unprotected guest memory + hashing
 Result: `lectura emulada` = 0 for the whole run, a steady 24-30 fps, and the game is **menu-navigable** (boot 15) —
 boot, main menu (heard, not seen), input with click sounds, and into a game's intro.
 
+## 14. Frame rate in a match
+
+In a match the game ran at 7-8 frames/s with the GPU busy ~40 ms of a ~125 ms frame (`[deko3d]` report in
+`halo3.log`): the CPU sets the pace, and the game's main thread (`MAIN_THREAD`, 60 % CPU, no other wait) is the
+critical path. Its stack samples, symbolized with the ELF of the same build (keep a copy of each uploaded ELF:
+`~/archive/halo3-elf/`), gave:
+
+- **~32 % asleep in XMP.** The game loop calls `XMPGetPlaybackController` (through the XDK's "title has playback
+  control" check, `sub_8208E2A8`, from `sub_82137470` and `sub_82088FA0`) a few times per frame. Xenia sleeps 10 ms
+  in it on any thread but the kernel's main one, for a game that polls it in a tight loop; Halo's game thread is not
+  that thread. The SDK now sleeps only for a real tight loop (more than 8 calls from one thread within 16 ms), in
+  `XMPGetStatus` too.
+- **~13 % in the game's 128-byte vector copy** (`sub_825A18C0`, under `sub_82142338`). `[rexcrt]` in
+  `overrides.toml` now runs the CRT's memcpy and memset and that block copy natively.
+- **The C library's register save/restore helpers ran as functions.** `xenonanalyse_functions.toml` lists every
+  entry of `__savegprlr_N`/`__restgprlr_N` (`0x8258DFB0`, `0x8258E000`) as a plain function, which renamed the
+  helpers the codegen had found; the codegen now keeps them, so `non_volatile_as_local` can drop their calls.
+- **No direct calls.** `tools/llamadas_directas.py` only looked for `nfsmw_recomp.*` files; Halo 3's 92,877 calls
+  between functions without a hook now go straight to `__imp__sub_X` (see `docs/toolchain.md`).
+- The `r17`/node-loop diagnostic hooks of boots 12-13 were removed: that crash was the read-fault storm, and
+  `Halo3NodeLoopCheck` ran four heap lookups per animated node.
+
 ## How each crash was read
 
 - **Logs on the console**: `<NRO folder>/logs/` (one `halo3_NNN.log` per run) and `<NRO folder>/logs/rex/`

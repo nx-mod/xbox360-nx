@@ -62,7 +62,7 @@ def main():
     cambiadas = 0
     ficheros = 0
     for f in sorted(os.listdir(gen)):
-        if not (f.startswith('nfsmw_recomp.') and f.endswith('.cpp')):
+        if not (re.match(r'\w+_recomp\.\d+\.cpp$', f)):
             continue
         ruta = os.path.join(gen, f)
         texto = open(ruta, encoding='utf-8').read()

@@ -34,6 +34,17 @@ ConvertFiberToThread = 0x8259FCB0  # frees it; fails with 1281 (ERROR_ALREADY_TH
 CreateFiber = 0x8259FD00           # (stack size, start, parameter): stack rounded up, 16 KiB minimum
 DeleteFiber = 0x8259FDE0
 SwitchToFiber = 0x8259FE40         # b 0x825A2180, the register save
+# The C library's copies and fills, run natively instead of instruction by instruction (identified by reading the
+# generated code). Stack samples in a match: ~13 % of the game's main thread in the 128-byte vector copy alone.
+#   memmove 0x8258E090: the CRT's memcpy (1,463 call sites). Forwards only, returns r3: hooked with memmove semantics,
+#           a superset, so nothing depends on it tolerating overlap.
+#   memset  0x8258E5C0: 1,460 call sites. Bytes until aligned, words with the byte replicated, bytes at the end;
+#           size 0 writes nothing, r3 is returned untouched.
+#   XMemCpy 0x82142338: copies of 256 bytes or more in 128-byte vector blocks (sub_825A18C0, sub_825A1C50: lvx128 and
+#           stvlx128 with dcbzl/dcbf, nothing else), smaller ones through the memcpy above; returns r3.
+memmove = 0x8258E090
+memset = 0x8258E5C0
+XMemCpy = 0x82142338
 
 # Jump tables ReXGlue sized at one entry and XenonAnalyse missed too (no bounds check before the jump). Each table
 # starts right after its bctr and ends where the code resumes, at its lowest target; the index is r11 (rlwinm r0,r11,2).
@@ -86,104 +97,3 @@ name = "Halo3FenceSpinYield"
 [[midasm_hook]]
 address = 0x826C62AC
 name = "Halo3AudioBarrierYield"
-
-# Diagnostic while the object crash of boots 8-13 is chased (src/halo3_hooks.cpp). Boot 13 crashed storing to
-# r5 = r17 + 52 * node with r17 = 0x1_4B1E_xxxx, a value `add r17,r10,r29` (0x8231D940, a 16-bit offset plus the
-# object) cannot make: r17 is replaced somewhere in sub_8231D8D0. Its value is kept after the add and compared after
-# every call of the function and at both calls of the node loop; the first change is logged with its call site.
-# Remove once it is understood.
-[[midasm_hook]]
-address = 0x8231D940
-name = "Halo3R17Keep"
-registers = ["r17", "r29", "r14"]
-after_instruction = true
-
-[[midasm_hook]]
-address = 0x8231DA04
-name = "Halo3R17After_8231DA04"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DA18
-name = "Halo3R17After_8231DA18"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DA9C
-name = "Halo3R17After_8231DA9C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DB30
-name = "Halo3R17After_8231DB30"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DB7C
-name = "Halo3R17After_8231DB7C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DBE8
-name = "Halo3R17After_8231DBE8"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DC54
-name = "Halo3R17After_8231DC54"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DC78
-name = "Halo3R17After_8231DC78"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DC9C
-name = "Halo3R17After_8231DC9C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DCD4
-name = "Halo3R17After_8231DCD4"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DD3C
-name = "Halo3R17After_8231DD3C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DDBC
-name = "Halo3R17After_8231DDBC"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DDF0
-name = "Halo3R17After_8231DDF0"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DE5C
-name = "Halo3R17After_8231DE5C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DE6C
-name = "Halo3R17After_8231DE6C"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DEC8
-name = "Halo3R17After_8231DEC8"
-registers = ["r17"]
-
-[[midasm_hook]]
-address = 0x8231DF8C
-name = "Halo3NodeLoopCheck"
-registers = ["r4", "r5", "r17", "r22", "r29", "r30", "r21", "r14"]
-
-[[midasm_hook]]
-address = 0x8231DFF8
-name = "Halo3NodeLoopCheck"
-registers = ["r4", "r5", "r17", "r22", "r29", "r30", "r21", "r14"]
