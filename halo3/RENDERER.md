@@ -153,5 +153,10 @@ Checked against them:
   USF4's menu; Ryujinx does not show it). Not our case: `DestinoColor` and `DestinoProfundidad` size their images
   the same way from the shared pitch, and a depth target is bound only when the draw tests depth or stencil.
 
-Next from them: Halo 3's Direct3D census (its XDK version from the XEX's static library list, the ~25 functions by
-address, the device's private offsets), useful whichever renderer stays.
+Next from them: Halo 3's Direct3D census (the ~25 functions by address, the device's private offsets), useful
+whichever renderer stays.
+
+**Halo 3's XDK: 2.0.6132** (`default.xex` optional header 0x200FF): `D3D9`, `D3DX9`, `XGRAPHC` and the rest at
+2.0.6132, `RTDMP` 2.0.4902. Older than every reNut port (Naruto 6274, N&B 7645, SA2 21076), and the plain `D3D9`
+library, not `D3D9LTCG` as Naruto's: its functions are not merged into the game's, which should make them easier to
+find by shape. `VdSwap`'s caller is `D3DDevice_Swap`, a first anchor.
