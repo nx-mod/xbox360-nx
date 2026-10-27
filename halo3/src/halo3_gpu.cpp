@@ -24,6 +24,7 @@
 #include "halo3_shaders.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -145,7 +146,7 @@ REXCVAR_DEFINE_BOOL(halo3_dibujar_geometria, false, "Halo3",
 
 class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
  public:
-  RingGraphicsSystem() : registers_(kRegisterCount, 0) {}
+  RingGraphicsSystem() : registers_(kRegisterCount, 0) { IniciarRampas(); }
   ~RingGraphicsSystem() override { Shutdown(); }
 
   X_STATUS SetupPresentation(rex::ui::WindowedAppContext* app_context) override {
@@ -314,6 +315,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (r < kRegisterCount) {
       Cambio(r, value);
       registers_[r] = value;  // no side effects through MMIO (graphics_system.cpp)
+      if (r >= kRegRampaModo && r <= kRegRampaMascara) {
+        ++rampa_por_mmio_;  // diagnostic: Xenia loads the ramps from the ring only
+      }
     }
     if (r == kRegCpRbWptr) {
       write_pointer_.store(value, std::memory_order_release);
@@ -352,6 +356,109 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
+  // --- The display's gamma ramps (DC_LUT_*) ------------------------------------
+  // The Xbox 360 does not show the front buffer as it is: the display applies the ramp the game loads, the 256-entry
+  // table for an 8_8_8_8 front buffer and the 128-entry piecewise-linear (PWL) one for 2_10_10_10, Halo 3's (a linear
+  // 10-bit frame: without the ramp it showed about 5x too dark). Loaded as the SDK's CommandProcessor::WriteRegister
+  // does, and applied as its presenter does (apply_gamma_pwl: 10-bit input i, entry i >> 3, base + (i & 7) * delta / 8,
+  // over 65472), through the renderer's output table (RenderDk::RampaGamma).
+  static constexpr uint32_t kRegRampaModo = 0x1921;        // DC_LUT_RW_MODE (bit 0: PWL)
+  static constexpr uint32_t kRegRampaIndice = 0x1922;      // DC_LUT_RW_INDEX
+  static constexpr uint32_t kRegRampaSecuencial = 0x1923;  // DC_LUT_SEQ_COLOR
+  static constexpr uint32_t kRegRampaPwl = 0x1924;         // DC_LUT_PWL_DATA
+  static constexpr uint32_t kRegRampa30 = 0x1925;          // DC_LUT_30_COLOR
+  static constexpr uint32_t kRegRampaMascara = 0x1927;     // DC_LUT_WRITE_EN_MASK (blue at bit 0)
+
+  struct EntradaPwl {
+    uint16_t base = 0, delta = 0;
+  };
+
+  void IniciarRampas() {
+    // The linear defaults the SDK starts from (CommandProcessor::Initialize).
+    for (uint32_t i = 0; i < 256; ++i) {
+      const uint16_t v = uint16_t(i * 0x3FF / 0xFF);
+      rampa_256_[i] = {v, v, v};
+    }
+    for (uint32_t i = 0; i < 128; ++i) {
+      const EntradaPwl e{uint16_t((i * 0xFFFF / 0x7F) & ~UINT32_C(0x3F)), uint16_t(i < 0x7F ? 0x200 : 0)};
+      rampa_pwl_[i] = {e, e, e};
+    }
+  }
+
+  void AnotarRampa(uint32_t index, uint32_t value) {
+    const uint32_t mascara = registers_[kRegRampaMascara];
+    if (index == kRegRampaIndice) {
+      componente_rampa_ = 0;
+    } else if (index == kRegRampaSecuencial) {
+      const uint32_t i = registers_[kRegRampaIndice] & 0xFF;
+      if (mascara & (UINT32_C(1) << (2 - componente_rampa_))) {
+        rampa_256_[i][componente_rampa_] = uint16_t((value >> 6) & 0x3FF);  // bits 0-5 are hardwired to zero
+        ++version_rampa_;
+        ++escrituras_256_;
+      }
+      if (++componente_rampa_ >= 3) {
+        componente_rampa_ = 0;
+        registers_[kRegRampaIndice] = (registers_[kRegRampaIndice] & ~UINT32_C(0xFF)) | ((i + 1) & 0xFF);
+      }
+    } else if (index == kRegRampaPwl) {
+      const uint32_t indice = registers_[kRegRampaIndice];
+      const uint32_t i = indice & 0x7F;  // bit 7 is ignored for PWL
+      if (mascara & (UINT32_C(1) << (2 - componente_rampa_))) {
+        // DC_LUT_PWL_DATA: base in bits 0-15, delta in 16-31, each with bits 0-5 hardwired to zero.
+        rampa_pwl_[i][componente_rampa_] = {uint16_t(value & 0xFFC0), uint16_t((value >> 16) & 0xFFC0)};
+        ++version_rampa_;
+        ++escrituras_pwl_;
+      }
+      if (++componente_rampa_ >= 3) {
+        componente_rampa_ = 0;
+        registers_[kRegRampaIndice] = (indice & ~UINT32_C(0x7F)) | ((i + 1) & 0x7F);
+      }
+    } else if (index == kRegRampa30) {
+      const uint32_t i = registers_[kRegRampaIndice] & 0xFF;
+      if (mascara & 0b001) rampa_256_[i][2] = uint16_t(value & 0x3FF);
+      if (mascara & 0b010) rampa_256_[i][1] = uint16_t((value >> 10) & 0x3FF);
+      if (mascara & 0b100) rampa_256_[i][0] = uint16_t((value >> 20) & 0x3FF);
+      if (mascara & 0b111) {
+        ++version_rampa_;
+        ++escrituras_256_;
+      }
+      componente_rampa_ = 0;
+      registers_[kRegRampaIndice] = (registers_[kRegRampaIndice] & ~UINT32_C(0xFF)) | ((i + 1) & 0xFF);
+    }
+  }
+
+  // At each swap: the ramp for the front buffer's format, sent to the renderer when it or the choice changes.
+  void AplicarRampa(uint32_t formato_frontal) {
+    const bool pwl = formato_frontal == 7 || formato_frontal == 54;  // k_2_10_10_10 (+ _AS_16_16_16_16)
+    if (version_rampa_ == version_rampa_aplicada_ && pwl == rampa_pwl_aplicada_) {
+      return;
+    }
+    version_rampa_aplicada_ = version_rampa_;
+    rampa_pwl_aplicada_ = pwl;
+    std::array<std::array<uint16_t, 3>, 256> tabla = rampa_256_;
+    if (pwl) {
+      // The output table is indexed by the 8-bit frame value; the PWL takes the 10-bit one.
+      for (uint32_t i = 0; i < 256; ++i) {
+        const uint32_t v = (i * 1023 + 127) / 255;
+        for (uint32_t c = 0; c < 3; ++c) {
+          const EntradaPwl& e = rampa_pwl_[v >> 3][c];
+          const float salida = (float(e.base) + float((v & 7) * e.delta) * 0.125f) / 65472.0f;
+          tabla[i][c] = uint16_t(std::clamp(salida, 0.0f, 1.0f) * 1023.0f + 0.5f);
+        }
+      }
+    }
+    destinos_->RampaGamma(tabla);
+    if (rampas_avisadas_ < 6) {
+      ++rampas_avisadas_;
+      std::fprintf(stderr,
+                   "[gpu] rampa de gamma: %s (frontal formato %u), escrituras 256=%llu pwl=%llu mmio=%llu; "
+                   "salida 0/64/128/192/255 -> %u %u %u %u %u\n",
+                   pwl ? "PWL" : "256", formato_frontal, (unsigned long long)escrituras_256_,
+                   (unsigned long long)escrituras_pwl_, (unsigned long long)rampa_por_mmio_, tabla[0][1], tabla[64][1],
+                   tabla[128][1], tabla[192][1], tabla[255][1]);
+    }
+  }
+
   void WriteRegister(uint32_t index, uint32_t value) {
     if (index >= kRegisterCount) {
       return;
@@ -361,6 +468,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
     Cambio(index, value);
     registers_[index] = value;
+    if (index >= kRegRampaModo && index <= kRegRampaMascara) {
+      AnotarRampa(index, value);
+    }
     // Scratch registers are mirrored to memory (SCRATCH_ADDR) for the ones SCRATCH_UMSK selects: the game
     // waits on those values to know where the GPU is.
     if (index >= rex::graphics::XE_GPU_REG_SCRATCH_REG0 && index <= rex::graphics::XE_GPU_REG_SCRATCH_REG7) {
@@ -609,7 +719,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
                        (unsigned long long)e.traducidos, (unsigned long long)e.fallidos);
         }
         if (EnsureRenderer()) {
-          destinos_->Presentar(presenter_.get(), rex::x360::LeerTexturaSwap(registers_.data()), 1280, 720);
+          const rex::x360::TexturaSwap swap = rex::x360::LeerTexturaSwap(registers_.data());
+          AplicarRampa(swap.dword[1] & 0x3F);
+          destinos_->Presentar(presenter_.get(), swap, 1280, 720);
         }
         break;
       case xenos::PM4_INDIRECT_BUFFER:
@@ -991,6 +1103,14 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
 
   // Only the ring thread touches these.
   uint64_t swaps_ = 0, draws_ = 0, packets_ = 0, waits_cut_short_ = 0, copias_ = 0;
+  // The gamma ramps (AnotarRampa, AplicarRampa).
+  std::array<std::array<uint16_t, 3>, 256> rampa_256_{};
+  std::array<std::array<EntradaPwl, 3>, 128> rampa_pwl_{};
+  uint32_t componente_rampa_ = 0;
+  uint64_t version_rampa_ = 0, version_rampa_aplicada_ = UINT64_MAX;
+  bool rampa_pwl_aplicada_ = false;
+  uint64_t escrituras_256_ = 0, escrituras_pwl_ = 0, rampa_por_mmio_ = 0;
+  uint32_t rampas_avisadas_ = 0;
   uint64_t reported_swaps_ = 0, reported_draws_ = 0, reported_packets_ = 0;
   Clock::time_point last_report_;
 };
