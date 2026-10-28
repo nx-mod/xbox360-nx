@@ -102,7 +102,7 @@ XENO_CND(xeno_cnd_gt, greaterThan)
 // ---- Constant blocks: the renderer's UBOs 0-3 (vertex, pixel, shared, Halo 3's booleans and loop constants)
 layout(std140, binding = 0) uniform NfsmwBloqueVs { vec4 v[256]; } g_UboVertex;
 layout(std140, binding = 1) uniform NfsmwBloquePs { vec4 v[256]; } g_UboPixel;
-layout(std140, binding = 2) uniform NfsmwBloqueCompartidas { vec4 v[32]; } g_UboCompartidas;
+layout(std140, binding = 2) uniform NfsmwBloqueCompartidas { vec4 v[48]; } g_UboCompartidas;
 layout(std140, binding = 3) uniform Halo3BooleanBlock { uvec4 b[2]; uvec4 bucles[8]; } g_Halo3Booleans;
 #define NFSMW_COMPARTIDA_UINT(B)  floatBitsToUint(g_UboCompartidas.v[(B) / 16][((B) % 16) / 4])
 #define NFSMW_COMPARTIDA_FLOAT(B) g_UboCompartidas.v[(B) / 16][((B) % 16) / 4]
@@ -127,19 +127,37 @@ ivec4 halo_loop(uint n) {
 #else
 #define XENO_MUESTRA(t, c) texture(t, c)
 #endif
+// The fetch constant's sign modes (signed, biased) on what the host texture returned unsigned: the renderer's word per
+// slot at bytes 512 + 4 * slot (kPalabraSignos). Signed reads the stored 8- or 16-bit value as two's complement.
+float xeno_signo(float v, uint modo, uint ancho) {
+  if (modo == 2u) return v * 2.0 - 1.0;
+  if (modo == 1u && ancho != 0u) {
+    float m = ancho == 2u ? 65535.0 : 255.0, h = ancho == 2u ? 32767.0 : 127.0;
+    float x = round(clamp(v, 0.0, 1.0) * m);
+    return max((x > h ? x - m - 1.0 : x) / h, -1.0);
+  }
+  return v;
+}
+vec4 xeno_signos(vec4 v, int s) {
+  uint w = NFSMW_COMPARTIDA_UINT(512 + (s & 31) * 4);
+  if ((w & 0xFFu) == 0u) return v;
+  uint a = (w >> 8) & 3u;
+  return vec4(xeno_signo(v.x, w & 3u, a), xeno_signo(v.y, (w >> 2) & 3u, a), xeno_signo(v.z, (w >> 4) & 3u, a),
+              xeno_signo(v.w, (w >> 6) & 3u, a));
+}
 vec4 tfetch2D(sampler2D t, int s, vec2 uv, vec2 offset, vec2 invSize) {
   vec2 d = (g_SpecConstants() & SPEC_CONSTANT_INV_TAMANO_TEX) != 0u ? offset * invSize : offset / vec2(textureSize(t, 0));
-  return XENO_MUESTRA(t, uv + d);
+  return xeno_signos(XENO_MUESTRA(t, uv + d), s);
 }
 vec4 getWeights2D(sampler2D t, int s, vec2 uv, vec2 offset, vec2 invSize) {
   vec2 f = fract(uv * vec2(textureSize(t, 0)) + offset - 0.5);
   return vec4(isnan(uv.x) ? 0.0 : f.x, isnan(uv.y) ? 0.0 : f.y, 0.0, 0.0);
 }
-vec4 tfetch1D(sampler2D t, int s, float u) { return XENO_MUESTRA(t, vec2(u, 0.5)); }
+vec4 tfetch1D(sampler2D t, int s, float u) { return xeno_signos(XENO_MUESTRA(t, vec2(u, 0.5)), s); }
 vec4 getWeights1D(sampler2D t, int s, float u) {
   return vec4(isnan(u) ? 0.0 : fract(u * float(textureSize(t, 0).x) - 0.5), 0.0, 0.0, 0.0);
 }
-vec4 tfetch3D(sampler3D t, int s, vec3 uvw) { return XENO_MUESTRA(t, uvw); }
+vec4 tfetch3D(sampler3D t, int s, vec3 uvw) { return xeno_signos(XENO_MUESTRA(t, uvw), s); }
 
 struct CubeMapData {
   vec3 cubeMapDirections[2];
@@ -147,7 +165,7 @@ struct CubeMapData {
 };
 CubeMapData xeno_cubo_vacio() { return CubeMapData(vec3[2](vec3(0.0), vec3(0.0)), 0u); }
 vec4 tfetchCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {
-  return XENO_MUESTRA(t, c.cubeMapDirections[int(uvw.z)]);
+  return xeno_signos(XENO_MUESTRA(t, c.cubeMapDirections[int(uvw.z)]), s);
 }
 // The bilinear weights on the face the direction lands on (getWeights on a cube map).
 vec4 getWeightsCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {

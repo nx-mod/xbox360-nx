@@ -2860,9 +2860,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             const char* nombre = dimension == uint32_t(TextureDimension::Texture3D) ? "3D"
                 : dimension == uint32_t(TextureDimension::TextureCube) ? "Cube" : "2D";
 #ifdef XENOS_GLSL
-            // A combined sampler at binding = slot; the "sampler" argument of the helpers is a dummy 0.
+            // A combined sampler at binding = slot; the "sampler" argument of the helpers is the slot, for the sign modes
+            // the renderer gives each slot (xeno_signos in the prelude).
             declaraciones += fmt::format("layout(binding = {0}) uniform sampler{1} s{0}_Textura;\n", slot, nombre);
-            declaraciones += fmt::format("#define s{0}_Muestreo 0\n", slot);
+            declaraciones += fmt::format("#define s{0}_Muestreo {0}\n", slot);
 #else
             declaraciones += fmt::format("[[vk::binding({0}, 0)]] Texture{1}<float4> s{0}_Textura;\n", slot, nombre);
             declaraciones += fmt::format("[[vk::binding({0}, 1)]] SamplerState s{0}_Muestreo;\n", slot);
