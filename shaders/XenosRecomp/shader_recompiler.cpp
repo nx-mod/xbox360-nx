@@ -1822,7 +1822,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 USAGE_VARIABLES[uint32_t(vertexElement.usage)], uint32_t(vertexElement.usageIndex));
             ordenEntradas.push_back(clave);
         }
-        out += "#define oPos gl_Position\n";
+        // Invariant: Halo 3 lays depth down in one pass and lights only where a later pass's depth matches it, with other
+        // shaders; a multiply-add fused in one and not the other moves the depth and the lit pass draws nothing.
+        out += "invariant gl_Position;\n#define oPos gl_Position\n";
         for (size_t k = 0; k < std::size(INTERPOLATORS); k++)
             if (declarado[k])
                 println("layout(location = {}) out float4 o{}{};", k, USAGE_VARIABLES[uint32_t(INTERPOLATORS[k].first)],
