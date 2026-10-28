@@ -956,17 +956,24 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         // count the vertex shader exports (SQ_PROGRAM_CNTL's vs_export_count + 1): only those are declared, so the
         // vertex shader computes and carries no more than the pixel shader reads. Worked out again only when a
         // shader or the count changes.
-        const uint32_t interpoladores =
-            std::min(16u, ((Register(rex::graphics::XE_GPU_REG_SQ_PROGRAM_CNTL) >> 20) & 0xF) + 1);
+        const uint32_t programa = Register(rex::graphics::XE_GPU_REG_SQ_PROGRAM_CNTL);
+        const uint32_t interpoladores = std::min(16u, ((programa >> 20) & 0xF) + 1);
+        // The pixel shader register that gets the pixel's screen position (SQ_PROGRAM_CNTL.param_gen,
+        // SQ_CONTEXT_MISC.param_gen_pos, as Xenia's GetInterpolatorInputMask): Halo 3's lighting, fog and post passes
+        // read their screen-space textures by it. Without it they all read one texel: flat grey, black or white.
+        const uint32_t posicion = (Register(rex::graphics::XE_GPU_REG_SQ_CONTEXT_MISC) >> 8) & 0xFF;
+        const uint32_t posicion_pixel = ((programa >> 18) & 0x1) && posicion < 16 ? posicion : 0xFFu;
         if (par_.generacion_vs != generacion_vs_ || par_.generacion_ps != generacion_ps_ ||
-            par_.interpoladores != interpoladores || par_.solo_profundidad != solo_profundidad) {
-          par_ = Par{generacion_vs_, generacion_ps_, interpoladores, solo_profundidad, nullptr, nullptr};
+            par_.interpoladores != interpoladores || par_.solo_profundidad != solo_profundidad ||
+            par_.posicion_pixel != posicion_pixel) {
+          par_ = Par{generacion_vs_, generacion_ps_, interpoladores, posicion_pixel, solo_profundidad, nullptr, nullptr};
           if (vs_actual_ && (solo_profundidad || ps_actual_)) {
             par_.vs = vs_actual_;
             par_.ps = solo_profundidad ? nullptr : ps_actual_;
           } else if (shaders_.activo()) {
             par_.vs = shaders_.Traducida(true, vs_microcodigo_, interpoladores);
-            par_.ps = solo_profundidad ? nullptr : shaders_.Traducida(false, ps_microcodigo_, interpoladores);
+            par_.ps = solo_profundidad ? nullptr
+                                       : shaders_.Traducida(false, ps_microcodigo_, interpoladores, posicion_pixel);
           }
         }
         if (par_.vs && (par_.ps || solo_profundidad)) {
@@ -1065,6 +1072,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
   struct Par {
     uint64_t generacion_vs = ~uint64_t(0), generacion_ps = ~uint64_t(0);
     uint32_t interpoladores = 0;
+    uint32_t posicion_pixel = 0xFF;
     bool solo_profundidad = false;
     const rex::x360::EntradaShader* vs = nullptr;
     const rex::x360::EntradaShader* ps = nullptr;

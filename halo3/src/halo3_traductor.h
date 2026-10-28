@@ -16,8 +16,9 @@
 namespace halo3 {
 
 // `microcodigo` in host byte order, as the ring carries it. false with the reason in `error`.
-// `interpoladores`: the pair's interpolator count (SQ_PROGRAM_CNTL's vs_export_count + 1).
+// `interpoladores`: the pair's interpolator count (SQ_PROGRAM_CNTL's vs_export_count + 1). `posicion_pixel`: the pixel
+// shader register with the screen position (SQ_CONTEXT_MISC.param_gen_pos), 0xFF for none.
 bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
-                         rex::x360::EntradaShader& entrada, std::string& error);
+                         uint32_t posicion_pixel, rex::x360::EntradaShader& entrada, std::string& error);
 
 }  // namespace halo3

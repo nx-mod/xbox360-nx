@@ -251,16 +251,17 @@ const EntradaShader* ShadersHalo::Identificar(bool vertices, std::span<const uin
 }
 
 const EntradaShader* ShadersHalo::Traducida(bool vertices, std::span<const uint32_t> microcodigo,
-                                           uint32_t interpoladores) {
+                                           uint32_t interpoladores, uint32_t posicion_pixel) {
   Datos& d = *datos_;
   if (!d.traductor) return nullptr;
-  const uint64_t clave = Clave(vertices, microcodigo) ^ (uint64_t(interpoladores) << 56);
+  const uint64_t clave =
+      Clave(vertices, microcodigo) ^ (uint64_t(interpoladores) << 56) ^ (uint64_t(posicion_pixel & 0xFF) << 48);
   if (const auto it = d.cache_traducidas.find(clave); it != d.cache_traducidas.end()) return it->second;
   const EntradaShader* r = nullptr;
 #if HALO3_DEKO3D
   EntradaShader& e = d.traducidas.emplace_back();
   std::string error;
-  if (TraducirMicrocodigo(vertices, microcodigo, interpoladores, e, error)) {
+  if (TraducirMicrocodigo(vertices, microcodigo, interpoladores, posicion_pixel, e, error)) {
     e.numero = uint32_t(0x80000000u | (d.traducidas.size() - 1));  // reports: translated, not in the library
     ++d.estadisticas.traducidos;
     r = &e;

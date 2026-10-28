@@ -2020,6 +2020,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         if (isPixelShader)
         {
             value = reinterpret_cast<const PixelShader*>(shader)->interpolators[i];
+            // The register that gets the pixel position (fieldC) takes it instead of its interpolator, as the
+            // hardware's param_gen overwrites it (Xenia: GetInterpolatorInputMask).
+            if (interpolator.reg == ((shader->fieldC >> 8) & 0xFF))
+                continue;
             println("\tfloat4 r{} = i{}{};", uint32_t(interpolator.reg), USAGE_VARIABLES[uint32_t(interpolator.usage)], uint32_t(interpolator.usageIndex));
             printedRegisters[interpolator.reg] = true;
         }

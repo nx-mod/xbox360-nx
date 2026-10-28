@@ -28,7 +28,7 @@ REXCVAR_DEFINE_BOOL(halo3_bucles_estructurados, false, "Halo3",
 namespace halo3 {
 
 bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
-                         rex::x360::EntradaShader& e, std::string& error) {
+                         uint32_t posicion_pixel, rex::x360::EntradaShader& e, std::string& error) {
   if (microcodigo.empty() || microcodigo.size() > 0x10000) {
     error = "microcodigo vacio o demasiado largo";
     return false;
@@ -37,7 +37,7 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
   uint32_t salidas = 0;
   try {
     static const bool bucles = REXCVAR_GET(halo3_bucles_estructurados);
-    texto = nucleo::Traducir(vertices, microcodigo, kPreludioGlsl, salidas, interpoladores, bucles);
+    texto = nucleo::Traducir(vertices, microcodigo, kPreludioGlsl, salidas, interpoladores, bucles, posicion_pixel);
   } catch (const std::exception& excepcion) {
     error = excepcion.what();
     return false;

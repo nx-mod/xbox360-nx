@@ -49,8 +49,9 @@ class ShadersHalo {
   // The translator's version, library or not (nullptr if it cannot), for a pair with `interpoladores` interpolators
   // (SQ_PROGRAM_CNTL): translated once per microcode and count. A library shader and a translated one read their
   // interpolators differently (by usage, by index), so a pair is drawn from the library only when both are in it.
+  // `posicion_pixel`: the pixel shader register with the screen position (param_gen), 0xFF for none.
   const rex::x360::EntradaShader* Traducida(bool vertices, std::span<const uint32_t> microcodigo,
-                                            uint32_t interpoladores);
+                                            uint32_t interpoladores, uint32_t posicion_pixel = 0xFF);
   static bool EsTraducida(const rex::x360::EntradaShader& e) { return !e.glsl.empty(); }
   EstadisticasShaders Estadisticas() const;
   size_t Cantidad() const;
