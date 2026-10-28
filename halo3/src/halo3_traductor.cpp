@@ -20,11 +20,16 @@
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 REXCVAR_DEFINE_BOOL(halo3_volcar_shaders, false, "Halo3",
                     "Diagnostic: write each translated shader (GLSL and raw microcode) to shaders_glsl/ beside the NRO, "
                     "named by the number the draw lists show")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_STRING(halo3_volcar_numeros, "", "Halo3",
+                      "Diagnostic: with halo3_volcar_shaders, only these shaders (comma-separated numbers as the draw "
+                      "lists show them, e.g. 2147483697); empty writes every one")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(halo3_bucles_estructurados, false, "Halo3",
                     "Testing: loops with jumps translated as structured loops instead of the general form (faster on "
@@ -36,6 +41,8 @@ namespace halo3 {
 void VolcarShader(bool vertices, uint32_t numero, std::span<const uint32_t> microcodigo, const std::string& glsl) {
   static const bool volcar = REXCVAR_GET(halo3_volcar_shaders);
   if (!volcar) return;
+  static const std::string numeros = "," + std::string(REXCVAR_GET(halo3_volcar_numeros)) + ",";
+  if (numeros != ",," && numeros.find(fmt::format(",{},", numero)) == std::string::npos) return;
   const std::filesystem::path carpeta = rex::filesystem::GetExecutableFolder() / "shaders_glsl";
   std::error_code ec;
   std::filesystem::create_directories(carpeta, ec);

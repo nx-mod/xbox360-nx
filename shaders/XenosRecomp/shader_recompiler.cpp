@@ -2061,7 +2061,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             print("\tfloat4 r{} = ", i);
             if (isPixelShader && i == ((shader->fieldC >> 8) & 0xFF))
             {
+#ifdef XENOS_GLSL
+                // The guest pixel's integer position: a 4x MSAA target is drawn in sample space, 2x2 host pixels a
+                // guest pixel (g_EscalaPixel, the renderer's pass scale).
+                out += "float4(floor(iPos.xy / g_EscalaPixel) * float2(iFace ? 1.0 : -1.0, 1.0), 0.0, 0.0);\n";
+#else
                 out += "float4((iPos.xy - 0.5) * float2(iFace ? 1.0 : -1.0, 1.0), 0.0, 0.0);\n";
+#endif
             }
         #ifdef HALO3_RECOMP
             // The vertex index, which the hardware loads into r0.x: the element-less fetches read their buffers by it.

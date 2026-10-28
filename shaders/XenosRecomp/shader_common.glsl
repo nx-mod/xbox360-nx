@@ -115,6 +115,7 @@ layout(std140, binding = 3) uniform Halo3BooleanBlock { uvec4 b[2]; uvec4 bucles
 #define g_InputRemap(LOC)          NFSMW_COMPARTIDA_UINT(296 + (LOC) * 4)
 // The guest vertex index (r0.x): the draw rebases its indices by the first vertex, which the renderer puts at 488.
 #define XENO_INDICE_VERTICE        (gl_VertexID + int(NFSMW_COMPARTIDA_UINT(488)))
+#define g_EscalaPixel              NFSMW_COMPARTIDA_FLOAT(640)  // host pixels per guest pixel (2 on a 4x MSAA target)
 #define halo_bool(A) ((g_Halo3Booleans.b[((A) >> 7) & 1][((A) >> 5) & 3] >> ((A) & 31)) & 1u)
 ivec4 halo_loop(uint n) {
   uint v = g_Halo3Booleans.bucles[n >> 2][n & 3u];
