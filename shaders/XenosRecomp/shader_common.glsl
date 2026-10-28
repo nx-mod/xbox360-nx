@@ -201,10 +201,20 @@ int xeno_ext(uint w, uint pos, uint bits, bool sgn) {
   uint v = (w >> pos) & ((1u << bits) - 1u);
   return sgn ? (int(v << (32u - bits)) >> (32u - bits)) : int(v);
 }
+// sgn: bit 0 signed, bit 1 the "no zero" signed fraction mode ((v + 0.5) / (2^(n-1) - 0.5), as Xenia).
 float xeno_comp(uint w, uint pos, uint bits, uint sgn, uint entero) {
-  int v = xeno_ext(w, pos, bits, sgn != 0u);
+  int v = xeno_ext(w, pos, bits, (sgn & 1u) != 0u);
   if (entero != 0u) return float(v);
-  return sgn != 0u ? max(float(v) / float((1u << (bits - 1u)) - 1u), -1.0) : float(v) / float((1u << bits) - 1u);
+  if ((sgn & 1u) == 0u) return float(v) / float((1u << bits) - 1u);
+  float m = float((1u << (bits - 1u)) - 1u);
+  return (sgn & 2u) != 0u ? (float(v) + 0.5) / (m + 0.5) : max(float(v) / m, -1.0);
+}
+// The 32-bit integer formats: as above, normalized unless integer.
+vec4 xeno_32(uvec4 w, uint sgn, uint entero) {
+  vec4 v = (sgn & 1u) != 0u ? vec4(ivec4(w)) : vec4(w);
+  if (entero != 0u) return v;
+  if ((sgn & 1u) == 0u) return v / 4294967295.0;
+  return (sgn & 2u) != 0u ? (v + 0.5) / 2147483647.5 : max(v / 2147483647.0, vec4(-1.0));
 }
 vec4 halo_vf_decodificar(uint w0, uint w1, uint w2, uint w3, uint f, uint sg, uint en, int ex) {
   vec4 r = vec4(0.0, 0.0, 0.0, 1.0);
@@ -222,9 +232,9 @@ vec4 halo_vf_decodificar(uint w0, uint w1, uint w2, uint w3, uint f, uint sg, ui
                        xeno_comp(w1, 16u, 16u, sg, en)); break;  // k_16_16_16_16
     case 31u: r.xy = unpackHalf2x16(w0); break;  // k_16_16_FLOAT
     case 32u: r = vec4(unpackHalf2x16(w0), unpackHalf2x16(w1)); break;  // k_16_16_16_16_FLOAT
-    case 33u: r.x = sg != 0u ? float(int(w0)) : float(w0); break;  // k_32
-    case 34u: r.xy = sg != 0u ? vec2(ivec2(w0, w1)) : vec2(w0, w1); break;  // k_32_32
-    case 35u: r = sg != 0u ? vec4(ivec4(w0, w1, w2, w3)) : vec4(w0, w1, w2, w3); break;  // k_32_32_32_32
+    case 33u: r.x = xeno_32(uvec4(w0, 0u, 0u, 0u), sg, en).x; break;  // k_32
+    case 34u: r.xy = xeno_32(uvec4(w0, w1, 0u, 0u), sg, en).xy; break;  // k_32_32
+    case 35u: r = xeno_32(uvec4(w0, w1, w2, w3), sg, en); break;  // k_32_32_32_32
     case 36u: r.x = uintBitsToFloat(w0); break;  // k_32_FLOAT
     case 37u: r.xy = uintBitsToFloat(uvec2(w0, w1)); break;  // k_32_32_FLOAT
     case 38u: r = uintBitsToFloat(uvec4(w0, w1, w2, w3)); break;  // k_32_32_32_32_FLOAT

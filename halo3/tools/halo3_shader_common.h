@@ -42,17 +42,27 @@ float4 getWeights1D(Texture2D<float4> texture, SamplerState samplerState, float 
 
 // Vertex fetches that no vertex element declares (pixel shaders, extra streams): a load from the fetch constant's
 // buffer, which the renderer copies byte-swapped as for vertex data (so each dword is in host order, first component
-// in the low bits). dword = index * stride + offset; format = the Xenos vertex format number; sgn: signed;
-// entero: integer (0 = normalized fraction); exp: power of two applied after (exp_adjust).
-float halo_snorm(int v, int bits) { return max(float(v) / float((1 << (bits - 1)) - 1), -1.0); }
+// in the low bits). dword = index * stride + offset; format = the Xenos vertex format number; sgn: bit 0 signed, bit 1
+// the "no zero" signed fraction mode; entero: integer (0 = normalized fraction); exp: power of two applied after
+// (exp_adjust).
+float halo_snorm(int v, int bits, uint sgn) {
+  float m = float((1 << (bits - 1)) - 1);
+  return (sgn & 2u) != 0 ? (float(v) + 0.5) / (m + 0.5) : max(float(v) / m, -1.0);
+}
+float4 halo_32(uint4 w, uint sgn, uint entero) {
+  float4 v = (sgn & 1u) != 0 ? float4(int4(w)) : float4(w);
+  if (entero != 0) return v;
+  if ((sgn & 1u) == 0) return v / 4294967295.0;
+  return (sgn & 2u) != 0 ? (v + 0.5) / 2147483647.5 : max(v / 2147483647.0, -1.0);
+}
 int halo_ext(uint w, uint pos, uint bits, bool sgn) {
   uint v = (w >> pos) & ((1u << bits) - 1u);
   return sgn ? (int(v << (32u - bits)) >> (32u - bits)) : int(v);
 }
 float halo_comp(uint w, uint pos, uint bits, uint sgn, uint entero) {
-  int v = halo_ext(w, pos, bits, sgn != 0);
+  int v = halo_ext(w, pos, bits, (sgn & 1u) != 0);
   if (entero != 0) return float(v);
-  return sgn != 0 ? halo_snorm(v, bits) : float(v) / float((1u << bits) - 1u);
+  return (sgn & 1u) != 0 ? halo_snorm(v, bits, sgn) : float(v) / float((1u << bits) - 1u);
 }
 float4 halo_vfetch(ByteAddressBuffer b, int dword, uint format, uint sgn, uint entero, int expo) {
   uint a = uint(max(dword, 0)) * 4u;
@@ -101,9 +111,9 @@ float4 halo_vfetch(ByteAddressBuffer b, int dword, uint format, uint sgn, uint e
       r = float4(f16tof32(uint2(w.x & 0xFFFFu, w.x >> 16)), f16tof32(uint2(w.y & 0xFFFFu, w.y >> 16)));
       break;
     }
-    case 33: r.x = sgn != 0 ? float(int(b.Load(a))) : float(b.Load(a)); break;  // k_32
-    case 34: { uint2 w = b.Load2(a); r.xy = sgn != 0 ? float2(int2(w)) : float2(w); break; }  // k_32_32
-    case 35: { uint4 w = b.Load4(a); r = sgn != 0 ? float4(int4(w)) : float4(w); break; }  // k_32_32_32_32
+    case 33: r.x = halo_32(uint4(b.Load(a), 0, 0, 0), sgn, entero).x; break;  // k_32
+    case 34: r.xy = halo_32(uint4(b.Load2(a), 0, 0), sgn, entero).xy; break;  // k_32_32
+    case 35: r = halo_32(b.Load4(a), sgn, entero); break;  // k_32_32_32_32
     case 36: r.x = asfloat(b.Load(a)); break;  // k_32_FLOAT
     case 37: r.xy = asfloat(b.Load2(a)); break;  // k_32_32_FLOAT
     case 38: r = asfloat(b.Load4(a)); break;  // k_32_32_32_32_FLOAT

@@ -273,7 +273,10 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
 #else
         print(" = halo_vfetch(g_vf{}, vfIndice * {} + ({}), {}, {}, {}, {}).", slot, zancada,
 #endif
-            int32_t(instr.offset), uint32_t(instr.format), uint32_t(instr.signedRfModeAll), uint32_t(instr.numFormatAll),
+            // Signedness: bit 0 is the format's signed flag (Xenia's fomat_comp_all), bit 1 the signed repeating
+            // fraction mode (1 = no zero). Passing the mode alone decoded signed data as unsigned.
+            int32_t(instr.offset), uint32_t(instr.format),
+            uint32_t(instr.formatCompAll) | (uint32_t(instr.signedRfModeAll) << 1), uint32_t(instr.numFormatAll),
             int32_t(instr.expAdjust));
         printDstSwizzle(instr.dstSwizzle, true);
         out += ";\n";
