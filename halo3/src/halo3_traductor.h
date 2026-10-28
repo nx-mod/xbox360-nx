@@ -21,4 +21,7 @@ namespace halo3 {
 bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
                          uint32_t posicion_pixel, rex::x360::EntradaShader& entrada, std::string& error);
 
+// halo3_volcar_shaders: the translated text and the microcode to shaders_glsl/<v|p>_<numero>.{glsl,bin}.
+void VolcarShader(bool vertices, uint32_t numero, std::span<const uint32_t> microcodigo, const std::string& glsl);
+
 }  // namespace halo3

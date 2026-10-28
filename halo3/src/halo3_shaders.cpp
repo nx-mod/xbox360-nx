@@ -263,6 +263,7 @@ const EntradaShader* ShadersHalo::Traducida(bool vertices, std::span<const uint3
   std::string error;
   if (TraducirMicrocodigo(vertices, microcodigo, interpoladores, posicion_pixel, e, error)) {
     e.numero = uint32_t(0x80000000u | (d.traducidas.size() - 1));  // reports: translated, not in the library
+    VolcarShader(vertices, e.numero, microcodigo, e.glsl);
     ++d.estadisticas.traducidos;
     r = &e;
   } else {
