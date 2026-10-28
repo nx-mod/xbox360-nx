@@ -21,8 +21,17 @@ inline std::string_view Cuerpo(const std::string& texto) {
 inline uint32_t SalidasEscritas(std::string_view cuerpo) {
   uint32_t salidas = 0;
   for (uint32_t c = 0; c < 4; ++c) {
-    const char nombre[] = {'o', 'C', char('0' + c), '\0'};
-    if (cuerpo.find(nombre) != std::string_view::npos) salidas |= PIXEL_SHADER_OUTPUT_COLOR0 << c;
+    // Not the exponent bias every declared output gets at the end ("oCn *= NFSMW_COMPARTIDA_FLOAT("): counted, it
+    // kept all four declared, and an output the shader never writes put an undefined value in its render target
+    // (Direct3D's clear, bound to four targets with only oC0 written, filled the other three with garbage).
+    const std::string nombre = std::string("oC") + char('0' + c);
+    const std::string sesgo = nombre + " *= NFSMW_COMPARTIDA_FLOAT(";
+    size_t total = 0, de_sesgo = 0;
+    for (size_t i = cuerpo.find(nombre); i != std::string_view::npos; i = cuerpo.find(nombre, i + 1)) {
+      ++total;
+      if (cuerpo.compare(i, sesgo.size(), sesgo) == 0) ++de_sesgo;
+    }
+    if (total > de_sesgo) salidas |= PIXEL_SHADER_OUTPUT_COLOR0 << c;
   }
   if (cuerpo.find("oDepth") != std::string_view::npos) salidas |= PIXEL_SHADER_OUTPUT_DEPTH;
   return salidas;
