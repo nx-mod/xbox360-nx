@@ -146,6 +146,10 @@ vec4 xeno_signos(vec4 v, int s) {
   return vec4(xeno_signo(v.x, w & 3u, a), xeno_signo(v.y, (w >> 2) & 3u, a), xeno_signo(v.z, (w >> 4) & 3u, a),
               xeno_signo(v.w, (w >> 6) & 3u, a));
 }
+// Unnormalized (texel) coordinates to the 0..1 range the samplers take.
+float xeno_denorm1D(sampler2D t, float u) { return u / float(textureSize(t, 0).x); }
+vec2 xeno_denorm2D(sampler2D t, vec2 uv) { return uv / vec2(textureSize(t, 0)); }
+vec3 xeno_denorm3D(sampler3D t, vec3 uvw) { return uvw / vec3(textureSize(t, 0)); }
 vec4 tfetch2D(sampler2D t, int s, vec2 uv, vec2 offset, vec2 invSize) {
   vec2 d = (g_SpecConstants() & SPEC_CONSTANT_INV_TAMANO_TEX) != 0u ? offset * invSize : offset / vec2(textureSize(t, 0));
   return xeno_signos(XENO_MUESTRA(t, uv + d), s);

@@ -491,7 +491,17 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
 #endif
 
     print("({0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr, dimension);
+#ifdef XENOS_GLSL
+    // Unnormalized coordinates are in texels (Halo's screen passes fetch by pixel position): divide by the size.
+    const bool desnormalizadas = instr.texCoordDenorm && instr.dimension != TextureDimension::TextureCube;
+    if (desnormalizadas)
+        print("xeno_denorm{0}({1}_Texture{0}DescriptorIndex, ", dimension, constNamePtr);
+#endif
     printSrcRegister(componentCount);
+#ifdef XENOS_GLSL
+    if (desnormalizadas)
+        out += ")";
+#endif
 
     switch (instr.dimension)
     {
