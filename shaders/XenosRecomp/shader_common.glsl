@@ -122,6 +122,110 @@ ivec4 halo_loop(uint n) {
   return ivec4(int(v & 0xFFu), int((v >> 8) & 0xFFu), int(v << 8) >> 24, 0);
 }
 
+#ifdef HALO3_VS
+// ---- Memory export (Xenia's ExportToMemory): eA is the stream constant with the element index in y's mantissa
+// (x: base dword address and 01 on top; z: endian, format, number type, red/blue swap; w: element count), eM0-4 are
+// consecutive elements. Each alloc and each exit store what was written since: every dword goes to the draw's region of
+// the record buffer as (guest byte address, value in guest byte order), and the renderer writes them to guest memory
+// once the GPU is done, inside the streams it found in the draw's constants. Halo 3's particles, light visibility tests
+// and water. Formats of 32 bits and more per element (8/16-bit ones would need read-modify-write).
+layout(std430, binding = 15) buffer XenoExportacion { uint d[]; } g_exportacion;
+#define XENO_EXPORT_BASE NFSMW_COMPARTIDA_UINT(644)
+#define XENO_EXPORT_CAPACIDAD NFSMW_COMPARTIDA_UINT(648)
+// A float to a field of `bits` bits as the number type says (bit 0 signed, bit 1 integer).
+uint xeno_export_fijo(float v, uint bits, uint numero) {
+  float m = float((1u << ((numero & 1u) != 0u ? bits - 1u : bits)) - 1u);
+  if (isnan(v)) v = 0.0;
+  if ((numero & 2u) == 0u) v *= m;
+  v = (numero & 1u) != 0u ? clamp(v, -m, m) : clamp(v, 0.0, m);
+  return uint(int(v < 0.0 ? v - 0.5 : v + 0.5)) & ((1u << bits) - 1u);
+}
+uint xeno_export_cambio(uint v, uint modo) {
+  if (modo == 1u) return ((v & 0x00FF00FFu) << 8) | ((v >> 8) & 0x00FF00FFu);
+  if (modo == 2u) return (v << 24) | ((v & 0xFF00u) << 8) | ((v >> 8) & 0xFF00u) | (v >> 24);
+  if (modo == 3u) return (v << 16) | (v >> 16);
+  return v;
+}
+void xeno_export_dword(uint direccion, uint valor) {
+  uint i = atomicAdd(g_exportacion.d[XENO_EXPORT_BASE], 1u);
+  if (i < XENO_EXPORT_CAPACIDAD) {
+    g_exportacion.d[XENO_EXPORT_BASE + 2u + i * 2u] = direccion;
+    g_exportacion.d[XENO_EXPORT_BASE + 3u + i * 2u] = valor;
+  }
+}
+void xeno_export_elemento(vec4 v, uint direccion, uint formato, uint numero, uint orden) {
+  uvec4 p = uvec4(0u);
+  uint n = 1u;
+  if (formato == 6u) {
+    p.x = xeno_export_fijo(v.x, 8u, numero) | (xeno_export_fijo(v.y, 8u, numero) << 8) |
+          (xeno_export_fijo(v.z, 8u, numero) << 16) | (xeno_export_fijo(v.w, 8u, numero) << 24);
+  } else if (formato == 7u) {
+    p.x = xeno_export_fijo(v.x, 10u, numero) | (xeno_export_fijo(v.y, 10u, numero) << 10) |
+          (xeno_export_fijo(v.z, 10u, numero) << 20) | (xeno_export_fijo(v.w, 2u, numero) << 30);
+  } else if (formato == 25u) {
+    p.x = xeno_export_fijo(v.x, 16u, numero) | (xeno_export_fijo(v.y, 16u, numero) << 16);
+  } else if (formato == 26u) {
+    p.x = xeno_export_fijo(v.x, 16u, numero) | (xeno_export_fijo(v.y, 16u, numero) << 16);
+    p.y = xeno_export_fijo(v.z, 16u, numero) | (xeno_export_fijo(v.w, 16u, numero) << 16);
+    n = 2u;
+  } else if (formato == 31u) {
+    p.x = packHalf2x16(v.xy);
+  } else if (formato == 32u) {
+    p.xy = uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw));
+    n = 2u;
+  } else if (formato == 36u) {
+    p.x = floatBitsToUint(v.x);
+  } else if (formato == 37u) {
+    p.xy = floatBitsToUint(v.xy);
+    n = 2u;
+  } else if (formato == 38u) {
+    p = floatBitsToUint(v);
+    n = 4u;
+  } else {
+    return;
+  }
+  if (orden <= 3u) {
+    p = uvec4(xeno_export_cambio(p.x, orden), xeno_export_cambio(p.y, orden), xeno_export_cambio(p.z, orden),
+              xeno_export_cambio(p.w, orden));
+  } else {
+    p = uvec4(xeno_export_cambio(p.x, 2u), xeno_export_cambio(p.y, 2u), xeno_export_cambio(p.z, 2u),
+              xeno_export_cambio(p.w, 2u));
+    p = orden == 4u ? p.yxwz : p.wzyx;
+  }
+  xeno_export_dword(direccion, p.x);
+  if (n > 1u) xeno_export_dword(direccion + 4u, p.y);
+  if (n > 2u) {
+    xeno_export_dword(direccion + 8u, p.z);
+    xeno_export_dword(direccion + 12u, p.w);
+  }
+}
+uint xeno_export_bytes(uint formato) {
+  if (formato == 38u) return 16u;
+  if (formato == 26u || formato == 32u || formato == 37u) return 8u;
+  return 4u;
+}
+void xeno_memexport(vec4 eA, vec4 m0, vec4 m1, vec4 m2, vec4 m3, vec4 m4, uint escritos) {
+  if (escritos == 0u || XENO_EXPORT_CAPACIDAD == 0u) return;  // no region bound: the buffer is not touched
+  uvec4 a = floatBitsToUint(eA);
+  if ((a.x >> 30) != 1u || (a.y >> 23) != 0x96u || (a.z >> 23) != 0x96u || (a.w >> 23) != 0x96u) return;
+  uint base = a.x << 2, indice = a.y & 0x7FFFFFu, cuenta = a.w & 0x7FFFFFu;
+  uint orden = a.z & 7u, formato = (a.z >> 8) & 63u, numero = (a.z >> 16) & 7u;
+  bool rojo_azul = (a.z & (1u << 19)) != 0u;
+  uint bytes = xeno_export_bytes(formato);
+  // One call per element, no array (a local array indexed at run time goes to scratch memory).
+  if ((escritos & 1u) != 0u && indice < cuenta)
+    xeno_export_elemento(rojo_azul ? m0.zyxw : m0, base + indice * bytes, formato, numero, orden);
+  if ((escritos & 2u) != 0u && indice + 1u < cuenta)
+    xeno_export_elemento(rojo_azul ? m1.zyxw : m1, base + (indice + 1u) * bytes, formato, numero, orden);
+  if ((escritos & 4u) != 0u && indice + 2u < cuenta)
+    xeno_export_elemento(rojo_azul ? m2.zyxw : m2, base + (indice + 2u) * bytes, formato, numero, orden);
+  if ((escritos & 8u) != 0u && indice + 3u < cuenta)
+    xeno_export_elemento(rojo_azul ? m3.zyxw : m3, base + (indice + 3u) * bytes, formato, numero, orden);
+  if ((escritos & 16u) != 0u && indice + 4u < cuenta)
+    xeno_export_elemento(rojo_azul ? m4.zyxw : m4, base + (indice + 4u) * bytes, formato, numero, orden);
+}
+#endif
+
 // ---- Texture fetches: combined samplers; the HLSL "sampler" argument is a dummy int. Vertex shaders sample level 0.
 #ifdef HALO3_VS
 #define XENO_MUESTRA(t, c) textureLod(t, c, 0.0)

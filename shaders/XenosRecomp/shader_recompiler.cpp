@@ -784,9 +784,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     bool closeIfBracket = false;
 
     std::string_view exportRegister;
-#ifdef HALO3_RECOMP
-    // Memory export (eA = 32, eM0-eM4 = 33-37): a shader writing to memory, which this translator does not do. Marked
-    // so the game can say which shaders lose those writes (halo3_traductor.cpp).
+#if defined(HALO3_RECOMP) && !defined(XENOS_GLSL)
+    // Memory export (eA = 32, eM0-eM4 = 33-37): not done by the HLSL library path. Marked so the game can say which
+    // shaders lose those writes (halo3_traductor.cpp).
     if (instr.exportData && instr.vectorDest >= 32 && instr.vectorDest <= 37)
     {
         indent();
@@ -840,6 +840,16 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
 
             default:
             {
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+                // Memory export: eA and eM0-4 (xeno_memexport in the prelude stores them at each alloc and exit).
+                if (instr.vectorDest >= 32 && instr.vectorDest <= 37)
+                {
+                    static constexpr const char* kExportacion[6] = {"xeA", "xeM0", "xeM1", "xeM2", "xeM3", "xeM4"};
+                    exportRegister = kExportacion[instr.vectorDest - 32];
+                    usaMemExport = true;
+                    break;
+                }
+#endif
                 auto findResult = interpolators.find(instr.vectorDest);
 #ifdef HALO3_RECOMP
                 // An export to an interpolator the shader does not declare: nothing reads it, it goes to a local.
@@ -1449,6 +1459,14 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             }
         }
     }
+
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+    if (exportRegister.starts_with("xeM"))
+    {
+        indent();
+        println("xeEscritos |= {}u;", 1u << (exportRegister[3] - '0'));
+    }
+#endif
 
     if (instr.scalarOpcode >= AluScalarOpcode::KillsEq && instr.scalarOpcode <= AluScalarOpcode::KillsOne)
     {
@@ -2108,6 +2126,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\tint vfIndice = 0;\n";
 #ifdef XENOS_GLSL
     out += "\tfloat4 oDescartado = float4(0.0);\n";
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+    if (!isPixelShader)
+        out += "\tfloat4 xeA = float4(0.0), xeM0 = float4(0.0), xeM1 = float4(0.0), xeM2 = float4(0.0), "
+               "xeM3 = float4(0.0), xeM4 = float4(0.0);\n\tuint xeEscritos = 0u;\n";
+#endif
 #else
     out += "\tfloat4 oDescartado = 0.0;\n";
 #endif
@@ -2443,6 +2466,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             switch (cfInstr.opcode)
             {
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+            case ControlFlowOpcode::Alloc:
+                // A new export allocation stores the previous memory export (Xenia's ExportToMemory).
+                if (!isPixelShader)
+                {
+                    indent();
+                    out += "xeno_memexport(xeA, xeM0, xeM1, xeM2, xeM3, xeM4, xeEscritos);\n";
+                    indent();
+                    out += "xeEscritos = 0u;\n";
+                }
+                break;
+#endif
             case ControlFlowOpcode::Exec:
             case ControlFlowOpcode::ExecEnd:
                 address = cfInstr.exec.address;
@@ -2683,6 +2718,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             if (shouldReturn)
             {
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+                if (!isPixelShader)
+                {
+                    // What the last alloc left to memory export (a no-op when nothing was written).
+                    indent();
+                    out += "xeno_memexport(xeA, xeM0, xeM1, xeM2, xeM3, xeM4, xeEscritos);\n";
+                }
+#endif
                 if (isPixelShader)
                 {
                     specConstantsMask |= SPEC_CONSTANT_ALPHA_TEST;
