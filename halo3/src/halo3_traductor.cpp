@@ -112,7 +112,14 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
     e.samplers.push_back(s);
   }
   e.salidas = salidas;
-  e.descarta = cuerpo.find("clip(") != std::string_view::npos || cuerpo.find("discard") != std::string_view::npos;
+  // Only the shader's own kills: every translated pixel shader ends with the alpha test's clip, which the
+  // specialization removes when the test is off (the renderer checks RB_COLORCONTROL for it). Counted as a discard,
+  // it kept the pixel shader on every depth-only draw and late depth on every draw.
+  e.descarta = cuerpo.find("discard") != std::string_view::npos;
+  for (size_t p = cuerpo.find("clip("); p != std::string_view::npos && !e.descarta; p = cuerpo.find("clip(", p + 1)) {
+    const std::string_view resto = cuerpo.substr(p + 5);
+    e.descarta = !resto.starts_with("alphaTestValue(") && !resto.starts_with("oC0.w - g_AlphaThreshold");
+  }
   e.constantes_bytes = 256 * 16;
   e.ubicaciones_por_orden = true;
   e.glsl = std::move(texto);
