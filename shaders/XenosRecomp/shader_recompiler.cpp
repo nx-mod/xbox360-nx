@@ -842,6 +842,11 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             {
 #if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
                 // Memory export: eA and eM0-4 (xeno_memexport in the prelude stores them at each alloc and exit).
+                if (instr.vectorDest >= 32 && instr.vectorDest <= 37 && sinMemExport)
+                {
+                    exportRegister = "oDescartado";
+                    break;
+                }
                 if (instr.vectorDest >= 32 && instr.vectorDest <= 37)
                 {
                     static constexpr const char* kExportacion[6] = {"xeA", "xeM0", "xeM1", "xeM2", "xeM3", "xeM4"};

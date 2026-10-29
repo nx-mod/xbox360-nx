@@ -78,6 +78,20 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
     return false;
   }
   const std::string_view cuerpo = nucleo::Cuerpo(texto);
+  // Diagnostic: the exporting shaders too large for the export code (nucleo::kPalabrasMaxExportacion), their microcode
+  // to logs/rex once, to reproduce uam's trouble with them on the PC.
+  if (vertices && microcodigo.size() > nucleo::kPalabrasMaxExportacion) {
+    const uint64_t huella = XXH3_64bits(microcodigo.data(), microcodigo.size_bytes());
+    const std::filesystem::path ruta =
+        rex::filesystem::GetExecutableFolder() / "logs" / "rex" / fmt::format("exporta_grande_{:016X}.bin", huella);
+    std::error_code ec;
+    if (!std::filesystem::exists(ruta, ec)) {
+      if (FILE* f = std::fopen(ruta.string().c_str(), "wb")) {
+        std::fwrite(microcodigo.data(), 4, microcodigo.size(), f);
+        std::fclose(f);
+      }
+    }
+  }
   if (cuerpo.empty()) {
     error = "la traduccion no tiene main";
     return false;

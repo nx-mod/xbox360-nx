@@ -20,6 +20,7 @@ struct StringBuffer
     // Loops with jumps in the structured form (brace simulation); false = a loop with any jump takes the general form.
     bool buclesConSaltosEstructurados = true;
     bool usaMemExport = false;  // a vertex shader that writes eA/eM (memory export)
+    bool sinMemExport = false;  // its eA/eM writes go nowhere (too large a shader for the export code)
     std::vector<bool> interpoladoresDeclarados;  // set while translating, for the outputs' initial values
 #endif
 

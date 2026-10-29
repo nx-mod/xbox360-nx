@@ -40,6 +40,8 @@ inline uint32_t SalidasEscritas(std::string_view cuerpo) {
 // A pixel shader is translated first with every output declared, then again with only the ones it writes: an output
 // it never writes would leave its render target undefined instead of untouched. `salidas` gets those (0 for a vertex
 // shader). `interpoladores`: the pair's count (SQ_PROGRAM_CNTL), the same for both stages.
+inline constexpr size_t kPalabrasMaxExportacion = 1000;
+
 inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo, std::string_view preludio,
                             uint32_t& salidas, uint32_t interpoladores = contenedor::kInterpoladores,
                             bool bucles_estructurados = true,
@@ -55,6 +57,10 @@ inline std::string Traducir(bool vertices, std::span<const uint32_t> microcodigo
     ShaderRecompiler traductor;
     traductor.soloInterpoladoresDelContenedor = true;  // only the pair's interpolators, not all 25
     traductor.buclesConSaltosEstructurados = bucles_estructurados;
+    // Memory export only up to kPalabrasMaxExportacion: Halo 3's two largest exporting shaders (2244 and 1713 words,
+    // its water) with the export code took uam minutes or crashed it (nv50_ir::RegAlloc), and the one compile worker
+    // left every shader behind them undrawn. Their writes are dropped, as before export was done.
+    traductor.sinMemExport = microcodigo.size() > kPalabrasMaxExportacion;
     traductor.recompile(c.data(), preludio);
     texto = std::move(traductor.out);
     if (vertices) break;
