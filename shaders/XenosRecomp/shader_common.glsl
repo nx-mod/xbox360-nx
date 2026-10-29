@@ -146,57 +146,41 @@ uint xeno_export_cambio(uint v, uint modo) {
   if (modo == 3u) return (v << 16) | (v >> 16);
   return v;
 }
-void xeno_export_dword(uint direccion, uint valor) {
-  uint i = atomicAdd(g_exportacion.d[XENO_EXPORT_BASE], 1u);
-  if (i < XENO_EXPORT_CAPACIDAD) {
-    g_exportacion.d[XENO_EXPORT_BASE + 2u + i * 2u] = direccion;
-    g_exportacion.d[XENO_EXPORT_BASE + 3u + i * 2u] = valor;
-  }
-}
+// One element: packed per format, byte-swapped, then its 1, 2 or 4 dwords as records under one atomic reservation.
 void xeno_export_elemento(vec4 v, uint direccion, uint formato, uint numero, uint orden) {
   uvec4 p = uvec4(0u);
   uint n = 1u;
-  if (formato == 6u) {
-    p.x = xeno_export_fijo(v.x, 8u, numero) | (xeno_export_fijo(v.y, 8u, numero) << 8) |
-          (xeno_export_fijo(v.z, 8u, numero) << 16) | (xeno_export_fijo(v.w, 8u, numero) << 24);
-  } else if (formato == 7u) {
-    p.x = xeno_export_fijo(v.x, 10u, numero) | (xeno_export_fijo(v.y, 10u, numero) << 10) |
-          (xeno_export_fijo(v.z, 10u, numero) << 20) | (xeno_export_fijo(v.w, 2u, numero) << 30);
-  } else if (formato == 25u) {
-    p.x = xeno_export_fijo(v.x, 16u, numero) | (xeno_export_fijo(v.y, 16u, numero) << 16);
-  } else if (formato == 26u) {
+  if (formato == 6u || formato == 7u) {
+    // k_8_8_8_8 / k_2_10_10_10: four fields in one dword
+    uint bx = formato == 6u ? 8u : 10u, bw = formato == 6u ? 8u : 2u;
+    p.x = xeno_export_fijo(v.x, bx, numero) | (xeno_export_fijo(v.y, bx, numero) << bx) |
+          (xeno_export_fijo(v.z, bx, numero) << (bx * 2u)) | (xeno_export_fijo(v.w, bw, numero) << (bx * 3u));
+  } else if (formato == 25u || formato == 26u) {
+    // k_16_16 / k_16_16_16_16
     p.x = xeno_export_fijo(v.x, 16u, numero) | (xeno_export_fijo(v.y, 16u, numero) << 16);
     p.y = xeno_export_fijo(v.z, 16u, numero) | (xeno_export_fijo(v.w, 16u, numero) << 16);
-    n = 2u;
-  } else if (formato == 31u) {
-    p.x = packHalf2x16(v.xy);
-  } else if (formato == 32u) {
+    n = formato == 26u ? 2u : 1u;
+  } else if (formato == 31u || formato == 32u) {
+    // k_16_16_FLOAT / k_16_16_16_16_FLOAT
     p.xy = uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw));
-    n = 2u;
-  } else if (formato == 36u) {
-    p.x = floatBitsToUint(v.x);
-  } else if (formato == 37u) {
-    p.xy = floatBitsToUint(v.xy);
-    n = 2u;
-  } else if (formato == 38u) {
+    n = formato == 32u ? 2u : 1u;
+  } else if (formato >= 36u && formato <= 38u) {
+    // k_32_FLOAT / k_32_32_FLOAT / k_32_32_32_32_FLOAT
     p = floatBitsToUint(v);
-    n = 4u;
+    n = formato == 36u ? 1u : formato == 37u ? 2u : 4u;
   } else {
     return;
   }
-  if (orden <= 3u) {
-    p = uvec4(xeno_export_cambio(p.x, orden), xeno_export_cambio(p.y, orden), xeno_export_cambio(p.z, orden),
-              xeno_export_cambio(p.w, orden));
-  } else {
-    p = uvec4(xeno_export_cambio(p.x, 2u), xeno_export_cambio(p.y, 2u), xeno_export_cambio(p.z, 2u),
-              xeno_export_cambio(p.w, 2u));
-    p = orden == 4u ? p.yxwz : p.wzyx;
-  }
-  xeno_export_dword(direccion, p.x);
-  if (n > 1u) xeno_export_dword(direccion + 4u, p.y);
-  if (n > 2u) {
-    xeno_export_dword(direccion + 8u, p.z);
-    xeno_export_dword(direccion + 12u, p.w);
+  uint m = orden <= 3u ? orden : 2u;
+  p = uvec4(xeno_export_cambio(p.x, m), xeno_export_cambio(p.y, m), xeno_export_cambio(p.z, m),
+            xeno_export_cambio(p.w, m));
+  if (orden == 4u) p = p.yxwz;
+  if (orden == 5u) p = p.wzyx;
+  uint r = atomicAdd(g_exportacion.d[XENO_EXPORT_BASE], n);
+  for (uint k = 0u; k < n && r + k < XENO_EXPORT_CAPACIDAD; ++k) {
+    uint at = XENO_EXPORT_BASE + 2u + (r + k) * 2u;
+    g_exportacion.d[at] = direccion + k * 4u;
+    g_exportacion.d[at + 1u] = k == 0u ? p.x : k == 1u ? p.y : k == 2u ? p.z : p.w;
   }
 }
 uint xeno_export_bytes(uint formato) {
@@ -204,6 +188,9 @@ uint xeno_export_bytes(uint formato) {
   if (formato == 26u || formato == 32u || formato == 37u) return 8u;
   return 4u;
 }
+// Inlined at every alloc and exit, so kept small: the elements in a loop with a run-time bound (not unrolled), no
+// array (one indexed at run time goes to scratch memory). A long particle shader with the elements unrolled at each
+// alloc overflowed uam's register allocator (a crash in nv50_ir::RegAlloc::buildLiveSets).
 void xeno_memexport(vec4 eA, vec4 m0, vec4 m1, vec4 m2, vec4 m3, vec4 m4, uint escritos) {
   if (escritos == 0u || XENO_EXPORT_CAPACIDAD == 0u) return;  // no region bound: the buffer is not touched
   uvec4 a = floatBitsToUint(eA);
@@ -212,17 +199,12 @@ void xeno_memexport(vec4 eA, vec4 m0, vec4 m1, vec4 m2, vec4 m3, vec4 m4, uint e
   uint orden = a.z & 7u, formato = (a.z >> 8) & 63u, numero = (a.z >> 16) & 7u;
   bool rojo_azul = (a.z & (1u << 19)) != 0u;
   uint bytes = xeno_export_bytes(formato);
-  // One call per element, no array (a local array indexed at run time goes to scratch memory).
-  if ((escritos & 1u) != 0u && indice < cuenta)
-    xeno_export_elemento(rojo_azul ? m0.zyxw : m0, base + indice * bytes, formato, numero, orden);
-  if ((escritos & 2u) != 0u && indice + 1u < cuenta)
-    xeno_export_elemento(rojo_azul ? m1.zyxw : m1, base + (indice + 1u) * bytes, formato, numero, orden);
-  if ((escritos & 4u) != 0u && indice + 2u < cuenta)
-    xeno_export_elemento(rojo_azul ? m2.zyxw : m2, base + (indice + 2u) * bytes, formato, numero, orden);
-  if ((escritos & 8u) != 0u && indice + 3u < cuenta)
-    xeno_export_elemento(rojo_azul ? m3.zyxw : m3, base + (indice + 3u) * bytes, formato, numero, orden);
-  if ((escritos & 16u) != 0u && indice + 4u < cuenta)
-    xeno_export_elemento(rojo_azul ? m4.zyxw : m4, base + (indice + 4u) * bytes, formato, numero, orden);
+  uint fin = uint(findMSB(escritos)) + 1u;
+  for (uint i = 0u; i < fin; ++i) {
+    if ((escritos & (1u << i)) == 0u || indice + i >= cuenta) continue;
+    vec4 v = i == 0u ? m0 : i == 1u ? m1 : i == 2u ? m2 : i == 3u ? m3 : m4;
+    xeno_export_elemento(rojo_azul ? v.zyxw : v, base + (indice + i) * bytes, formato, numero, orden);
+  }
 }
 #endif
 

@@ -2468,8 +2468,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
 #if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
             case ControlFlowOpcode::Alloc:
-                // A new export allocation stores the previous memory export (Xenia's ExportToMemory).
-                if (!isPixelShader)
+                // A new memory export allocation (type 3; position and interpolator allocs leave it) stores the
+                // previous one (Xenia's ExportToMemory). Only there and at the exits: the store is inlined each time.
+                if (!isPixelShader && cfInstr.alloc.allocType == 3)
                 {
                     indent();
                     out += "xeno_memexport(xeA, xeM0, xeM1, xeM2, xeM3, xeM4, xeEscritos);\n";
