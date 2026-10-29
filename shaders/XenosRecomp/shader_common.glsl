@@ -164,24 +164,34 @@ vec4 getWeights1D(sampler2D t, int s, float u) {
 }
 vec4 tfetch3D(sampler3D t, int s, vec3 uvw) { return xeno_signos(XENO_MUESTRA(t, uvw), s); }
 
+// The directions of the last two cube instructions, as two variables: an array indexed at run time went to local
+// memory (scratch) on Maxwell, and the shaders with reflections (Halo 3's characters) spilled.
 struct CubeMapData {
-  vec3 cubeMapDirections[2];
+  vec3 cubeMapDirection0;
+  vec3 cubeMapDirection1;
   uint cubeMapIndex;
 };
-CubeMapData xeno_cubo_vacio() { return CubeMapData(vec3[2](vec3(0.0), vec3(0.0)), 0u); }
+CubeMapData xeno_cubo_vacio() { return CubeMapData(vec3(0.0), vec3(0.0), 0u); }
+vec3 xeno_cubo_direccion(float indice, CubeMapData c) {
+  return (int(indice) & 1) == 0 ? c.cubeMapDirection0 : c.cubeMapDirection1;
+}
 vec4 tfetchCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {
-  return xeno_signos(XENO_MUESTRA(t, c.cubeMapDirections[int(uvw.z)]), s);
+  return xeno_signos(XENO_MUESTRA(t, xeno_cubo_direccion(uvw.z, c)), s);
 }
 // The bilinear weights on the face the direction lands on (getWeights on a cube map).
 vec4 getWeightsCube(samplerCube t, int s, vec3 uvw, inout CubeMapData c) {
-  vec3 d = c.cubeMapDirections[int(uvw.z)], a = abs(d);
+  vec3 d = xeno_cubo_direccion(uvw.z, c), a = abs(d);
   vec2 uv = a.x >= a.y && a.x >= a.z ? d.zy / a.x : a.y >= a.z ? d.xz / a.y : d.xy / max(a.z, 1e-20);
   vec2 f = fract((uv * 0.5 + 0.5) * float(textureSize(t, 0).x) - 0.5);
   return vec4(f, 0.0, 0.0);
 }
 vec4 cube(vec4 value, inout CubeMapData c) {
   uint index = c.cubeMapIndex;
-  c.cubeMapDirections[index] = value.xyz;
+  if ((index & 1u) == 0u) {
+    c.cubeMapDirection0 = value.xyz;
+  } else {
+    c.cubeMapDirection1 = value.xyz;
+  }
   ++c.cubeMapIndex;
   return vec4(0.0, 0.0, 0.0, float(index));
 }
