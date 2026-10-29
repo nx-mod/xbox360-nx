@@ -22,6 +22,7 @@
 
 #include "halo3_gpu.h"
 #include "halo3_shaders.h"
+#include "halo3_traductor.h"
 
 #include <algorithm>
 #include <array>
@@ -34,6 +35,7 @@
 #include <mutex>
 #include <vector>
 
+#include <rex/ui/deko3d/cache_dksh.h>
 #include <rex/graphics/registers.h>
 #include <rex/graphics/xenos.h>
 #include <rex/kernel/xboxkrnl/video.h>
@@ -506,6 +508,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     if (!provider_ || !presenter_) {
       return false;
     }
+    rex::deko3d::FijarSalCache(halo3::HuellaPreludio());  // the cache keeps only this prelude's shaders
     destinos_ = rex::x360::CrearDestinosDeko3d(
         static_cast<rex::deko3d::ProveedorDeko3d*>(provider_.get()), memory_);
     if (destinos_) {

@@ -57,6 +57,11 @@ void VolcarShader(bool vertices, uint32_t numero, std::span<const uint32_t> micr
   }
 }
 
+uint32_t HuellaPreludio() {
+  const uint64_t h = XXH3_64bits(kPreludioGlsl, sizeof(kPreludioGlsl) - 1);
+  return uint32_t(h ^ (h >> 32)) | 1u;  // never 0, which means no stamp
+}
+
 bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, uint32_t interpoladores,
                          uint32_t posicion_pixel, rex::x360::EntradaShader& e, std::string& error) {
   if (microcodigo.empty() || microcodigo.size() > 0x10000) {

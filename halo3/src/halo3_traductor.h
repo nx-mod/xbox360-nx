@@ -24,4 +24,8 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
 // halo3_volcar_shaders: the translated text and the microcode to shaders_glsl/<v|p>_<numero>.{glsl,bin}.
 void VolcarShader(bool vertices, uint32_t numero, std::span<const uint32_t> microcodigo, const std::string& glsl);
 
+// XXH3 of the translator's prelude (shader_common.glsl), folded to 32 bits: the DKSH cache's stamp
+// (rex::deko3d::FijarSalCache), so entries made under an older prelude are dropped from the file.
+uint32_t HuellaPreludio();
+
 }  // namespace halo3
