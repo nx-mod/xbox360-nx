@@ -146,10 +146,10 @@ uint xeno_export_cambio(uint v, uint modo) {
   if (modo == 3u) return (v << 16) | (v >> 16);
   return v;
 }
-// One element: packed per format, byte-swapped, then its 1, 2 or 4 dwords as records under one atomic reservation.
-void xeno_export_elemento(vec4 v, uint direccion, uint formato, uint numero, uint orden) {
+// One element packed per format and byte-swapped: its 1, 2 or 4 dwords (n).
+uvec4 xeno_export_empaquetar(vec4 v, uint formato, uint numero, uint orden, out uint n) {
   uvec4 p = uvec4(0u);
-  uint n = 1u;
+  n = 1u;
   if (formato == 6u || formato == 7u) {
     // k_8_8_8_8 / k_2_10_10_10: four fields in one dword
     uint bx = formato == 6u ? 8u : 10u, bw = formato == 6u ? 8u : 2u;
@@ -164,46 +164,56 @@ void xeno_export_elemento(vec4 v, uint direccion, uint formato, uint numero, uin
     // k_16_16_FLOAT / k_16_16_16_16_FLOAT
     p.xy = uvec2(packHalf2x16(v.xy), packHalf2x16(v.zw));
     n = formato == 32u ? 2u : 1u;
-  } else if (formato >= 36u && formato <= 38u) {
-    // k_32_FLOAT / k_32_32_FLOAT / k_32_32_32_32_FLOAT
+  } else {
+    // k_32_FLOAT / k_32_32_FLOAT / k_32_32_32_32_FLOAT (xeno_memexport leaves the rest out)
     p = floatBitsToUint(v);
     n = formato == 36u ? 1u : formato == 37u ? 2u : 4u;
-  } else {
-    return;
   }
   uint m = orden <= 3u ? orden : 2u;
   p = uvec4(xeno_export_cambio(p.x, m), xeno_export_cambio(p.y, m), xeno_export_cambio(p.z, m),
             xeno_export_cambio(p.w, m));
   if (orden == 4u) p = p.yxwz;
   if (orden == 5u) p = p.wzyx;
-  uint r = atomicAdd(g_exportacion.d[XENO_EXPORT_BASE], n);
-  for (uint k = 0u; k < n && r + k < XENO_EXPORT_CAPACIDAD; ++k) {
-    uint at = XENO_EXPORT_BASE + 2u + (r + k) * 2u;
-    g_exportacion.d[at] = direccion + k * 4u;
-    g_exportacion.d[at + 1u] = k == 0u ? p.x : k == 1u ? p.y : k == 2u ? p.z : p.w;
-  }
+  return p;
 }
 uint xeno_export_bytes(uint formato) {
   if (formato == 38u) return 16u;
   if (formato == 26u || formato == 32u || formato == 37u) return 8u;
   return 4u;
 }
-// Inlined at every alloc and exit, so kept small: the elements in a loop with a run-time bound (not unrolled), no
-// array (one indexed at run time goes to scratch memory). A long particle shader with the elements unrolled at each
-// alloc overflowed uam's register allocator (a crash in nv50_ir::RegAlloc::buildLiveSets).
+bool xeno_export_formato(uint f) {
+  return f == 6u || f == 7u || f == 25u || f == 26u || f == 31u || f == 32u || (f >= 36u && f <= 38u);
+}
+// Inlined at every memory alloc and exit, so kept small: one atomic reservation for all the elements, then each one
+// packed and stored, in a loop with a run-time bound (not unrolled), no array (one indexed at run time goes to scratch
+// memory). Elements unrolled at each alloc overflowed uam's register allocator (nv50_ir::RegAlloc::buildLiveSets).
 void xeno_memexport(vec4 eA, vec4 m0, vec4 m1, vec4 m2, vec4 m3, vec4 m4, uint escritos) {
   if (escritos == 0u || XENO_EXPORT_CAPACIDAD == 0u) return;  // no region bound: the buffer is not touched
   uvec4 a = floatBitsToUint(eA);
   if ((a.x >> 30) != 1u || (a.y >> 23) != 0x96u || (a.z >> 23) != 0x96u || (a.w >> 23) != 0x96u) return;
   uint base = a.x << 2, indice = a.y & 0x7FFFFFu, cuenta = a.w & 0x7FFFFFu;
   uint orden = a.z & 7u, formato = (a.z >> 8) & 63u, numero = (a.z >> 16) & 7u;
+  if (!xeno_export_formato(formato) || indice >= cuenta) return;
   bool rojo_azul = (a.z & (1u << 19)) != 0u;
-  uint bytes = xeno_export_bytes(formato);
-  uint fin = uint(findMSB(escritos)) + 1u;
+  uint bytes = xeno_export_bytes(formato), dwords = bytes / 4u;
+  // The elements inside the stream: bits below its end only.
+  uint quedan = cuenta - indice;
+  uint validos = escritos & (quedan >= 5u ? 31u : ((1u << quedan) - 1u));
+  if (validos == 0u) return;
+  uint r = atomicAdd(g_exportacion.d[XENO_EXPORT_BASE], uint(bitCount(validos)) * dwords);
+  uint fin = uint(findMSB(validos)) + 1u, j = 0u;
   for (uint i = 0u; i < fin; ++i) {
-    if ((escritos & (1u << i)) == 0u || indice + i >= cuenta) continue;
+    if ((validos & (1u << i)) == 0u) continue;
     vec4 v = i == 0u ? m0 : i == 1u ? m1 : i == 2u ? m2 : i == 3u ? m3 : m4;
-    xeno_export_elemento(rojo_azul ? v.zyxw : v, base + (indice + i) * bytes, formato, numero, orden);
+    uint n;
+    uvec4 p = xeno_export_empaquetar(rojo_azul ? v.zyxw : v, formato, numero, orden, n);
+    uint direccion = base + (indice + i) * bytes;
+    for (uint k = 0u; k < n; ++k, ++j) {
+      if (r + j >= XENO_EXPORT_CAPACIDAD) return;
+      uint at = XENO_EXPORT_BASE + 2u + (r + j) * 2u;
+      g_exportacion.d[at] = direccion + k * 4u;
+      g_exportacion.d[at + 1u] = k == 0u ? p.x : k == 1u ? p.y : k == 2u ? p.z : p.w;
+    }
   }
 }
 #endif
