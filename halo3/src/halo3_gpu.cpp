@@ -484,6 +484,40 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
     }
   }
 
+  // A run of float constants (0x4000-0x47FF, most of what the ring writes: thousands of dwords a frame) in one
+  // pass: the changed ones stored, each stage's generation bumped and its written range widened once, not per dword
+  // as WriteRegister does (the H3Recomp PC port's fast path for these runs). Anything else goes through WriteRegister.
+  template <class Valor>
+  void EscribirConstantes(uint32_t index, uint32_t n, Valor&& valor) {
+    if (index < 0x4000 || uint64_t(index) + n > 0x4800) {
+      for (uint32_t i = 0; i < n; ++i) {
+        WriteRegister(index + i, valor(i));
+      }
+      return;
+    }
+    uint32_t cambios[2] = {0, 0}, desde[2] = {UINT32_MAX, UINT32_MAX}, hasta[2] = {0, 0};
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t r = index + i, v = valor(i);
+      if (registers_[r] == v) {
+        continue;
+      }
+      registers_[r] = v;
+      const uint32_t etapa = r < 0x4400 ? 0 : 1;
+      const uint32_t reg = (r - (etapa ? 0x4400 : 0x4000)) >> 2;
+      ++cambios[etapa];
+      desde[etapa] = std::min(desde[etapa], reg);
+      hasta[etapa] = std::max(hasta[etapa], reg + 1);
+    }
+    for (uint32_t etapa = 0; etapa < 2; ++etapa) {
+      if (cambios[etapa]) {
+        ++(etapa ? generacion_constantes_ps_ : generacion_constantes_vs_);
+        uint32_t* sucio = sucio_constantes_ + (etapa ? 2 : 0);
+        sucio[0] = std::min(sucio[0], desde[etapa]);
+        sucio[1] = std::max(sucio[1], hasta[etapa]);
+      }
+    }
+  }
+
   // --- GPU memory (the two low bits of the address are the byte order) --------
 
   uint32_t ReadMemory(uint32_t address) const {
@@ -850,10 +884,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         const uint32_t type_index = data.Read();
         const uint32_t base = ConstantBase(type_index);
         if (base != UINT32_MAX) {
-          const uint32_t index = base + (type_index & 0x7FF);
-          for (uint32_t i = 1; i < count; ++i) {
-            WriteRegister(index + i - 1, data.Read());
-          }
+          EscribirConstantes(base + (type_index & 0x7FF), count - 1, [&](uint32_t) { return data.Read(); });
         }
         break;
       }
@@ -862,9 +893,7 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         // First word: the register index; the rest is written consecutively.
         if (count < 1) break;
         const uint32_t index = data.Read() & 0xFFFF;
-        for (uint32_t i = 1; i < count; ++i) {
-          WriteRegister(index + i - 1, data.Read());
-        }
+        EscribirConstantes(index, count - 1, [&](uint32_t) { return data.Read(); });
         break;
       }
       case xenos::PM4_LOAD_ALU_CONSTANT: {
@@ -877,9 +906,9 @@ class RingGraphicsSystem final : public rex::system::IGraphicsSystem {
         if (base != UINT32_MAX) {
           const uint8_t* source = memory_->TranslatePhysical(address);
           const uint32_t index = base + (type_index & 0x7FF);
-          for (uint32_t i = 0; i < n; ++i) {
-            WriteRegister(index + i, rex::memory::load_and_swap<uint32_t>(source + size_t(i) * 4));
-          }
+          EscribirConstantes(index, n, [&](uint32_t i) {
+            return rex::memory::load_and_swap<uint32_t>(source + size_t(i) * 4);
+          });
         }
         break;
       }
