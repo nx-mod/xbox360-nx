@@ -87,7 +87,7 @@ int main(int argc, char** argv) try {
     try {
       uint32_t salidas = 0;
       const std::string texto = halo3::nucleo::Traducir(vertices, microcodigo, preludio, salidas, interpoladores,
-                                                           /*bucles_estructurados=*/false);  // the console's default
+                                                           /*bucles_estructurados=*/std::getenv("XENOS_BUCLES") != nullptr);  // false: the console's default
       std::ofstream f(salida / (nombre + (vertices ? ".vert.glsl" : ".frag.glsl")), std::ios::binary);
       f.write(texto.data(), std::streamsize(texto.size()));
       ++ok;
