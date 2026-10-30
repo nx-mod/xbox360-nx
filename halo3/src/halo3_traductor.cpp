@@ -35,6 +35,12 @@ REXCVAR_DEFINE_BOOL(halo3_volcar_forma_general, false, "Halo3",
                     "Diagnostic: every shader translated in the general form (a switch on pc) to shaders_glsl/, its "
                     "GLSL and microcode, to study on the PC why it cannot be structured")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_INT32(halo3_bucles_estructurados_etapas, 0, "Halo3",
+                     "Testing: loops with jumps as structured loops by stage: 0 none (unless halo3_bucles_estructurados), "
+                     "1 all, 2 pixel shaders only, 3 vertex shaders only (to find the shader whose structured form hung "
+                     "the GPU)")
+    .range(0, 3)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(halo3_bucles_estructurados, false, "Halo3",
                     "Testing: loops with jumps translated as structured loops instead of the general form (faster on "
                     "the GPU; the first build with it hit a GPU fault)")
@@ -77,7 +83,9 @@ bool TraducirMicrocodigo(bool vertices, std::span<const uint32_t> microcodigo, u
   std::string texto;
   uint32_t salidas = 0;
   try {
-    static const bool bucles = REXCVAR_GET(halo3_bucles_estructurados);
+    static const bool todos = REXCVAR_GET(halo3_bucles_estructurados);
+    static const int32_t etapas = REXCVAR_GET(halo3_bucles_estructurados_etapas);
+    const bool bucles = todos || etapas == 1 || (etapas == 2 && !vertices) || (etapas == 3 && vertices);
     texto = nucleo::Traducir(vertices, microcodigo, kPreludioGlsl, salidas, interpoladores, bucles, posicion_pixel);
   } catch (const std::exception& excepcion) {
     error = excepcion.what();

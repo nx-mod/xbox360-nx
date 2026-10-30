@@ -2145,6 +2145,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             println("\tint4 i{0} = halo_loop({0});", i);
 #endif
     out += "\tint aL = 0;\n";
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+    // The Xenos's loops: an iteration counter and the outer loop's aL per nesting level (its loop stack is 4 deep).
+    out += "\tint xeIt0 = 0, xeIt1 = 0, xeIt2 = 0, xeIt3 = 0, xeAL0 = 0, xeAL1 = 0, xeAL2 = 0, xeAL3 = 0;\n";
+#endif
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
     if (isPixelShader)
@@ -2554,6 +2558,40 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                 break;
 
             case ControlFlowOpcode::LoopStart:
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+            {
+                // As the Xenos (Xenia's loop_start): the loop constant's count (x) iterations, aL from its start (y)
+                // by its step (z), the outer aL kept; a count of 0 skips to the loop's end. aL counting 0, 1, 2...
+                // read Halo 3's light arrays (5 registers a light) at the wrong lights.
+                const uint32_t d = std::min(profundidadBucle, 3u);
+                const uint32_t id = uint32_t(cfInstr.loopStart.loopId);
+                ++profundidadBucle;
+                if (simpleControlFlow)
+                {
+                    indent();
+                    println("xeAL{} = aL;", d);
+                    indent();
+                    println("aL = i{}.y;", id);
+                    indent();
+                    println("for (xeIt{0} = 0; xeIt{0} < i{1}.x; ++xeIt{0}, aL += i{1}.z)", d, id);
+                    indent();
+                    out += "{\n";
+                    ++indentation;
+                }
+                else
+                {
+                    println("\t\t\txeAL{} = aL;", d);
+                    println("\t\t\taL = i{}.y;", id);
+                    println("\t\t\txeIt{} = 0;", d);
+                    println("\t\t\tif (i{}.x <= 0)", id);
+                    out += "\t\t\t{\n";
+                    println("\t\t\t\tpc = {};", uint32_t(cfInstr.loopStart.address));
+                    out += "\t\t\t\tcontinue;\n";
+                    out += "\t\t\t}\n";
+                }
+                break;
+            }
+#else
                 if (simpleControlFlow)
                 {
                     indent();
@@ -2570,8 +2608,39 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += "\t\t\taL = 0;\n";
                 }
                 break;
+#endif
 
             case ControlFlowOpcode::LoopEnd:
+#if defined(HALO3_RECOMP) && defined(XENOS_GLSL)
+            {
+                profundidadBucle = profundidadBucle ? profundidadBucle - 1 : 0;
+                const uint32_t d = std::min(profundidadBucle, 3u);
+                const uint32_t id = uint32_t(cfInstr.loopEnd.loopId);
+                if (simpleControlFlow)
+                {
+                    if (indentation > 1)  // never main's own brace
+                    {
+                        --indentation;
+                        indent();
+                        out += "}\n";
+                        indent();
+                        println("aL = xeAL{};", d);
+                    }
+                }
+                else
+                {
+                    println("\t\t\t++xeIt{};", d);
+                    println("\t\t\taL += i{}.z;", id);
+                    println("\t\t\tif (xeIt{} < i{}.x)", d, id);
+                    out += "\t\t\t{\n";
+                    println("\t\t\t\tpc = {};", uint32_t(cfInstr.loopEnd.address));
+                    out += "\t\t\t\tcontinue;\n";
+                    out += "\t\t\t}\n";
+                    println("\t\t\taL = xeAL{};", d);
+                }
+                break;
+            }
+#else
                 if (simpleControlFlow)
                 {
 #ifdef HALO3_RECOMP
@@ -2593,6 +2662,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                     out += "\t\t\t}\n";
                 }
                 break;
+#endif
 
             case ControlFlowOpcode::CondJmp:
             {
